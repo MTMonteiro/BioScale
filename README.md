@@ -52,6 +52,8 @@ Aplicativo mobile (**React Native + Expo**) desenvolvido para substituir o **OKO
 ```text
 bio-scale-ai/
 ├── App.tsx                                  # Navegação principal (6 abas) e estado global
+├── plugins/
+│   └── withAndroidGradleFixes.js            # Config Plugin Expo (minSdk=26, arm64-v8a e intent Health Connect)
 ├── src/
 │   ├── components/
 │   │   ├── BodyAvatarSvg.tsx                # Avatar SVG paramétrico em tempo real
@@ -74,47 +76,103 @@ bio-scale-ai/
 
 ---
 
-## 🚀 Como Executar em Desenvolvimento
+## 🐧 Guia Completo de Ambiente no WSL2 (Ubuntu)
 
-### Pré-requisitos
-- **Node.js** 20+
-- **Java JDK 17** e **Android SDK** (para compilar o módulo nativo Bluetooth e Health Connect)
+> **Importante**: Ao trabalhar no WSL2, sempre clone o repositório dentro do sistema de arquivos nativo do Linux (ex.: `~/projects/BioScale`), **nunca** em `/mnt/c/...`. Isso garante performance máxima de I/O e elimina o limite de 260 caracteres (`MAX_PATH`) do Windows durante a compilação C++ (CMake/Ninja) do React Native New Architecture.
 
-### Instalação
-
+### 1. Clonar o projeto no filesystem do WSL2
 ```bash
+mkdir -p ~/projects && cd ~/projects
+git clone https://github.com/MTMonteiro/BioScale.git
+cd BioScale
 npm install
 ```
 
-### Rodando no Android
+### 2. Instalar Java JDK 17 e Android SDK no WSL2 (apenas na 1ª vez)
 ```bash
-npx expo run:android
+# Instalar OpenJDK 17 e utilitários
+sudo apt update && sudo apt install -y openjdk-17-jdk unzip wget
+
+# Baixar Android Command Line Tools
+mkdir -p ~/Android/Sdk/cmdline-tools
+cd ~/Android/Sdk/cmdline-tools
+wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
+unzip -q cmdline-tools.zip && mv cmdline-tools latest && rm cmdline-tools.zip
+
+# Configurar variáveis de ambiente no ~/.bashrc (ou ~/.zshrc)
+cat << 'EOF' >> ~/.bashrc
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export ANDROID_HOME=$HOME/Android/Sdk
+export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+EOF
+source ~/.bashrc
+
+# Aceitar licenças e instalar SDKs necessários para Expo 58 + Health Connect
+yes | sdkmanager --licenses
+sdkmanager "platform-tools" "platforms;android-36" "platforms;android-37" "build-tools;36.0.0" "build-tools;37.0.0" "ndk;27.1.12297006"
 ```
+
+### 3. Gerar o APK direto pelo WSL2 (1 comando)
+O projeto já inclui o plugin [`plugins/withAndroidGradleFixes.js`](plugins/withAndroidGradleFixes.js), que configura automaticamente `android.minSdkVersion=26`, `reactNativeArchitectures=arm64-v8a` e o `intent-filter` do Health Connect durante o `prebuild`. Para compilar o APK no WSL:
+
+```bash
+npm run build:apk:wsl
+```
+O instalador final será copiado automaticamente para `./BioScale-AI.apk` na raiz do projeto.
+
+### 4. Conectando seu Celular Android ao WSL2 (Depuração Sem Fio)
+Como a balança usa **Bluetooth Low Energy (BLE)** e **Health Connect**, o teste em tempo real é feito no aparelho Android físico:
+1. No celular Android, ative **Opções do Desenvolvedor -> Depuração por Wi-Fi**.
+2. Toque em **Parear dispositivo com código de pareamento** e execute no WSL:
+   ```bash
+   adb pair IP_DO_CELULAR:PORTA_DE_PAREAMENTO
+   adb connect IP_DO_CELULAR:PORTA_DE_CONEXAO
+   ```
+3. Para instalar o APK recém-gerado no celular:
+   ```bash
+   adb install -r BioScale-AI.apk
+   ```
+4. Ou para rodar com Fast Refresh / Metro Bundler:
+   ```bash
+   npx expo start --dev-client --lan
+   ```
 
 ---
 
-## 📦 Gerando o APK de Release
+## 📦 Gerando Releases pelo GitHub Actions
 
-### Opção 1: Via GitHub Actions (Manual com Validação SemVer)
-1. Acesse a aba **Actions** no repositório do GitHub.
+1. Acesse a aba **Actions** no repositório [`MTMonteiro/BioScale`](https://github.com/MTMonteiro/BioScale/actions).
 2. Selecione o workflow **Build Android APK & Release**.
-3. Clique em **Run workflow** e informe a nova versão (ex.: `1.0.0`).
-   - *Nota*: A Action valida automaticamente que a versão informada é **estritamente maior** que a última release publicada.
-4. Ao finalizar, o arquivo `BioScale-AI-vX.Y.Z.apk` estará disponível na aba **Releases** do GitHub.
-
-### Opção 2: Build Local
-```bash
-npx expo prebuild --platform android --clean
-cd android
-./gradlew assembleRelease --no-daemon -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease
-```
-O APK compilado será gerado em `android/app/build/outputs/apk/release/app-release.apk`.
+3. Clique em **Run workflow** e informe a nova versão SemVer (ex.: `1.0.0`).
+   - *Regra de proteção*: A Action verifica automaticamente a última tag publicada no GitHub Releases e **bloqueia o build** caso a versão informada seja igual ou inferior à última release.
+4. Ao finalizar, o arquivo `BioScale-AI-vX.Y.Z.apk` é anexado automaticamente na aba **Releases**.
 
 ---
 
-## 🗄️ Schema Opcional do Supabase
+## 🔬 Especificação Técnica do Protocolo BLE (`0xCA` Wellmix / Chipsea / OKOK)
 
-Caso deseje ativar o backup em nuvem na aba **Ajustes**, execute o SQL abaixo no seu projeto do Supabase:
+O parser em [`src/services/okokBleParser.ts`](src/services/okokBleParser.ts) decodifica os pacotes `Manufacturer Specific Data` transmitidos via Bluetooth Low Energy pelas balanças compatíveis com o app OKOK:
+
+| Offset (Byte) | Descrição | Formato / Cálculo |
+| :--- | :--- | :--- |
+| `0` | Header / Magic Byte | `0xCA` (Protocolo Chipsea V2) ou `0xCF` / `0xC0` |
+| `1` | Versão do Protocolo | Ex.: `0x10` ou `0x11` |
+| `2` | Flags de Estado | Bit `0` (`0x01`): Peso estabilizado / medição finalizada |
+| `3..4` | Peso Bruto (`uint16` Big-Endian) | `(byte[3] << 8 \| byte[4]) / 100` (ou `/ 10` conforme escala) $\rightarrow$ **kg** |
+| `5..6` | Impedância Bioelétrica (`uint16` BE) | `(byte[5] << 8 \| byte[6])` $\rightarrow$ **Ohms ($\Omega$)** |
+| `7..12` | Endereço MAC da Balança | 6 bytes finais do pacote |
+
+---
+
+## 🗄️ Chaves de Armazenamento Local (`AsyncStorage`) & Schema Supabase
+
+Por padrão, o app funciona **100% offline** salvando tudo no celular com as chaves:
+- `@bioscale:user_profile_v1`: Perfil do usuário, provedor de IA ativo (`openrouter`, `deepseek`, `gemini`, `local`), chave de API e credenciais opcionais do Supabase.
+- `@bioscale:weight_history_v1`: Histórico completo de pesagens e bioimpedância.
+- `@bioscale:body_measurements_v1`: Histórico de circunferências corporais de fita métrica (10 regiões).
+
+### SQL Opcional para Nuvem (Supabase)
+Caso deseje ativar o backup em nuvem na aba **Ajustes**, execute o SQL abaixo no SQL Editor do seu projeto Supabase:
 
 ```sql
 create table if not exists public.bioimpedance_logs (

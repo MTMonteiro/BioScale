@@ -42,7 +42,8 @@
           "bluetoothAlwaysPermission": "Permitir que o BioScale AI se conecte à sua balança Wellmix via Bluetooth."
         }
       ],
-      "react-native-health-connect"
+      "react-native-health-connect",
+      "./plugins/withAndroidGradleFixes"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

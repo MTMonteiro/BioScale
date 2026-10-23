@@ -27,7 +27,10 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "prebuild:android": "expo prebuild --platform android --clean",
+    "build:apk:wsl": "expo prebuild --platform android --clean && cd android && ./gradlew assembleRelease --no-daemon -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease && cp app/build/outputs/apk/release/app-release.apk ../BioScale-AI.apk"
   },
   "private": true
 }
