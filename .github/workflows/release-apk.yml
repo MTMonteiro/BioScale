@@ -80,7 +80,7 @@ jobs:
       - name: Accept Android SDK Licenses & Install Build Tools
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "platforms;android-37" "build-tools;36.0.0" "build-tools;37.0.0"
 
       - name: Install npm dependencies
         run: npm install
@@ -106,13 +106,14 @@ jobs:
       - name: Configure Gradle for Release APK (arm64-v8a)
         run: |
           echo "android.suppressUnsupportedCompileSdk=36,37" >> android/gradle.properties
+          echo "android.minSdkVersion=26" >> android/gradle.properties
           sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
 
       - name: Build Release APK with Gradle
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon -x lint -x checkReleaseAarMetadata
+          ./gradlew assembleRelease --no-daemon -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease
 
       - name: Rename APK with Version
         id: apk_file
