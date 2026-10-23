@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   SafeAreaView,
   StatusBar,
+  Alert,
+  Platform,
 } from 'react-native';
 import {
   Bluetooth,
@@ -31,16 +33,27 @@ import {
   Plus,
   Minus,
   Layers,
+  Trash2,
+  Clock,
 } from 'lucide-react-native';
 import {
   AiProvider,
   BioimpedanceMetrics,
   BodyMeasurementsEntry,
   BodyPartKey,
+  DayPeriod,
+  DayPeriodFilter,
   SamsungHealthSummary,
   UserProfile,
 } from './src/types/health';
-import { calculateBioimpedance, getBmiCategory } from './src/utils/bioimpedance';
+import {
+  calculateBioimpedance,
+  DAY_PERIOD_INFO,
+  filterMeasurementsByPeriod,
+  getBmiCategory,
+  getDayPeriodFromIso,
+  resolveMeasurementPeriod,
+} from './src/utils/bioimpedance';
 import {
   BODY_PARTS_GUIDE,
   BODY_PART_ORDER,
@@ -51,6 +64,8 @@ import { syncWithSamsungHealth } from './src/services/samsungHealthService';
 import {
   loadMeasurements,
   addMeasurement,
+  deleteMeasurement,
+  updateMeasurementPeriod,
   loadProfile,
   saveProfile,
   loadBodyMeasurementsHistory,
@@ -117,6 +132,11 @@ export default function App() {
     'Pronto para escanear sua balança Wellmix (OKOK BLE)'
   );
   const [rawLogs, setRawLogs] = useState<string[]>([]);
+  const [periodFilter, setPeriodFilter] = useState<DayPeriodFilter>('all');
+  const [scannerPeriodChoice, setScannerPeriodChoice] = useState<'auto' | DayPeriod>(
+    'auto'
+  );
+  const [webConfirmDeleteId, setWebConfirmDeleteId] = useState<string | null>(null);
 
   // Estados do AI Coach
   const [aiReport, setAiReport] = useState<string>('');
@@ -156,6 +176,50 @@ export default function App() {
   const latest = history.length > 0 ? history[history.length - 1] : null;
   const previous = history.length > 1 ? history[history.length - 2] : null;
 
+  const handleDeleteMeasurement = async (id: string) => {
+    const updated = await deleteMeasurement(id, profile);
+    setHistory(updated);
+  };
+
+  const handleUpdateMeasurementPeriod = async (
+    id: string,
+    nextPeriod: DayPeriod
+  ) => {
+    const updated = await updateMeasurementPeriod(id, nextPeriod, profile);
+    setHistory(updated);
+  };
+
+  const handlePromptDeleteMeasurement = (item: BioimpedanceMetrics) => {
+    const pInfo = DAY_PERIOD_INFO[resolveMeasurementPeriod(item)];
+    const d = new Date(item.timestamp);
+    const dateStr = `${String(d.getDate()).padStart(2, '0')}/${String(
+      d.getMonth() + 1
+    ).padStart(2, '0')}`;
+
+    if (Platform.OS === 'web') {
+      if (webConfirmDeleteId === item.id) {
+        handleDeleteMeasurement(item.id);
+        setWebConfirmDeleteId(null);
+      } else {
+        setWebConfirmDeleteId(item.id);
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Excluir Registro de Peso',
+      `Deseja excluir a pesagem de ${item.weightKg} kg (${dateStr} • ${pInfo.icon} ${pInfo.label}) para não atrapalhar suas estatísticas?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: () => handleDeleteMeasurement(item.id),
+        },
+      ]
+    );
+  };
+
   const handleSyncSamsungHealth = async (measurementToWrite?: BioimpedanceMetrics) => {
     setSyncingHealth(true);
     const res = await syncWithSamsungHealth(measurementToWrite || latest || undefined);
@@ -184,10 +248,13 @@ export default function App() {
         if (reading.isStabilized) {
           stopScan();
           setIsScanning(false);
+          const chosenPeriod =
+            scannerPeriodChoice === 'auto' ? undefined : scannerPeriodChoice;
           const metrics = calculateBioimpedance(
             reading.weightKg,
             reading.impedanceOhm,
-            profile
+            profile,
+            chosenPeriod
           );
           const updated = await addMeasurement(metrics, profile);
           setHistory(updated);
@@ -230,13 +297,21 @@ export default function App() {
     setLiveImpedance(simulatedImpedance);
 
     setTimeout(async () => {
-      const metrics = calculateBioimpedance(simulatedWeight, simulatedImpedance, profile);
+      const chosenPeriod =
+        scannerPeriodChoice === 'auto' ? undefined : scannerPeriodChoice;
+      const metrics = calculateBioimpedance(
+        simulatedWeight,
+        simulatedImpedance,
+        profile,
+        chosenPeriod
+      );
       const updated = await addMeasurement(metrics, profile);
       setHistory(updated);
       await handleSyncSamsungHealth(metrics);
       setIsScanning(false);
+      const pInfo = DAY_PERIOD_INFO[resolveMeasurementPeriod(metrics)];
       setBleStatusMsg(
-        `Pesagem concluída e salva! ${metrics.weightKg} kg (${metrics.bodyFatPercent}% gordura) sincronizado com Samsung Health.`
+        `Pesagem (${pInfo.icon} ${pInfo.label}) salva! ${metrics.weightKg} kg (${metrics.bodyFatPercent}% gordura) sincronizado com Samsung Health.`
       );
     }, 900);
   };
@@ -277,23 +352,153 @@ export default function App() {
   };
 
   const renderDashboard = () => {
-    if (!latest) return null;
-    const weightDiff = previous
-      ? Math.round((latest.weightKg - previous.weightKg) * 10) / 10
+    const filteredHistory = filterMeasurementsByPeriod(history, periodFilter);
+    const activeLatest =
+      filteredHistory.length > 0
+        ? filteredHistory[filteredHistory.length - 1]
+        : latest;
+
+    if (!activeLatest) {
+      return (
+        <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+          <View style={styles.heroCard}>
+            <Text style={styles.heroSubtitle}>SEM REGISTROS DE PESO</Text>
+            <Text style={[styles.aiDesc, { marginBottom: 14 }]}>
+              Nenhuma pesagem cadastrada. Vá até a aba Balança para pesar ou simular!
+            </Text>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() => setActiveTab('scanner')}
+            >
+              <Bluetooth size={18} color="#0F172A" />
+              <Text style={styles.primaryBtnText}>Ir para a Balança</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      );
+    }
+
+    const activePeriod = resolveMeasurementPeriod(activeLatest);
+    const activePeriodInfo = DAY_PERIOD_INFO[activePeriod];
+
+    // Compara sempre com a pesagem anterior do mesmo filtro (ou do mesmo turno se estiver em 'all')
+    const sameShiftHistory = filterMeasurementsByPeriod(history, activePeriod);
+    const idxInSameShift = sameShiftHistory.findIndex((i) => i.id === activeLatest.id);
+    const prevSameShift =
+      idxInSameShift > 0 ? sameShiftHistory[idxInSameShift - 1] : null;
+    const prevInFilter =
+      filteredHistory.length > 1
+        ? filteredHistory[filteredHistory.length - 2]
+        : null;
+    const comparisonBase =
+      periodFilter === 'all' ? prevSameShift || prevInFilter : prevInFilter;
+
+    const weightDiff = comparisonBase
+      ? Math.round((activeLatest.weightKg - comparisonBase.weightKg) * 10) / 10
       : 0;
-    const bmiCat = getBmiCategory(latest.bmi);
+    const bmiCat = getBmiCategory(activeLatest.bmi);
+
+    // Estatísticas limpas do filtro selecionado
+    const statsSource = filteredHistory.length > 0 ? filteredHistory : history;
+    const weightsList = statsSource.map((i) => i.weightKg);
+    const avgWeight =
+      Math.round(
+        (weightsList.reduce((a, b) => a + b, 0) / weightsList.length) * 10
+      ) / 10;
+    const minWeight = Math.min(...weightsList);
+    const maxWeight = Math.max(...weightsList);
+
+    const periodFilterOptions: Array<{
+      key: DayPeriodFilter;
+      label: string;
+      icon: string;
+      color: string;
+    }> = [
+      { key: 'all', label: 'Todos', icon: '🕒', color: '#38BDF8' },
+      { key: 'morning', label: 'Manhã', icon: '☀️', color: '#F59E0B' },
+      { key: 'afternoon', label: 'Tarde', icon: '🌤️', color: '#38BDF8' },
+      { key: 'night', label: 'Noite', icon: '🌙', color: '#A855F7' },
+    ];
 
     return (
       <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        {/* Seletor Rápido de Turno (Manhã, Tarde, Noite) */}
+        <View style={styles.dashboardPeriodBar}>
+          {periodFilterOptions.map((opt) => {
+            const isSel = periodFilter === opt.key;
+            const count =
+              opt.key === 'all'
+                ? history.length
+                : filterMeasurementsByPeriod(history, opt.key).length;
+            return (
+              <TouchableOpacity
+                key={opt.key}
+                onPress={() => setPeriodFilter(opt.key)}
+                style={[
+                  styles.dashboardPeriodChip,
+                  isSel && {
+                    backgroundColor: opt.color + '25',
+                    borderColor: opt.color,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.dashboardPeriodChipText,
+                    isSel && { color: opt.color, fontWeight: '800' },
+                  ]}
+                >
+                  {opt.icon} {opt.label} ({count})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {filteredHistory.length === 0 && periodFilter !== 'all' && (
+          <View style={styles.emptyShiftBanner}>
+            <Text style={styles.emptyShiftBannerText}>
+              Nenhuma pesagem no turno de {DAY_PERIOD_INFO[periodFilter].label}. Exibindo a última pesagem geral abaixo.
+            </Text>
+          </View>
+        )}
+
         {/* Card Principal de Peso e Bioimpedância */}
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
-            <View>
-              <Text style={styles.heroSubtitle}>ÚLTIMA PESAGEM WELLMIX</Text>
+            <View style={{ flex: 1 }}>
+              <View style={styles.rowCenter}>
+                <Text style={styles.heroSubtitle}>
+                  {periodFilter === 'all'
+                    ? 'ÚLTIMA PESAGEM WELLMIX'
+                    : `ÚLTIMA PESAGEM • ${DAY_PERIOD_INFO[periodFilter].label.toUpperCase()}`}
+                </Text>
+                <View
+                  style={[
+                    styles.shiftInlineBadge,
+                    {
+                      borderColor: activePeriodInfo.color,
+                      backgroundColor: activePeriodInfo.color + '20',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.shiftInlineBadgeText,
+                      { color: activePeriodInfo.color },
+                    ]}
+                  >
+                    {activePeriodInfo.icon} {activePeriodInfo.label}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.weightRow}>
-                <Text style={styles.heroWeight}>{latest.weightKg.toFixed(1)}</Text>
+                <Text style={styles.heroWeight}>
+                  {activeLatest.weightKg.toFixed(1)}
+                </Text>
                 <Text style={styles.heroUnit}>kg</Text>
-                {previous && (
+                {comparisonBase && (
                   <View
                     style={[
                       styles.deltaBadge,
@@ -306,36 +511,53 @@ export default function App() {
                         { color: weightDiff <= 0 ? '#34D399' : '#FCA5A5' },
                       ]}
                     >
-                      {weightDiff > 0 ? `+${weightDiff}` : weightDiff} kg
+                      {weightDiff > 0 ? `+${weightDiff}` : weightDiff} kg (vs{' '}
+                      {activePeriodInfo.label})
                     </Text>
                   </View>
                 )}
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.weighNowBtn}
-              onPress={() => setActiveTab('scanner')}
-            >
-              <Bluetooth size={18} color="#0F172A" />
-              <Text style={styles.weighNowBtnText}>Pesar</Text>
-            </TouchableOpacity>
+            <View style={styles.heroActionsCol}>
+              <TouchableOpacity
+                style={styles.weighNowBtn}
+                onPress={() => setActiveTab('scanner')}
+              >
+                <Bluetooth size={18} color="#0F172A" />
+                <Text style={styles.weighNowBtnText}>Pesar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.deleteHeroBtn}
+                onPress={() => handlePromptDeleteMeasurement(activeLatest)}
+              >
+                <Trash2 size={13} color="#FCA5A5" />
+                <Text style={styles.deleteHeroBtnText}>
+                  {webConfirmDeleteId === activeLatest.id
+                    ? 'Confirmar?'
+                    : 'Excluir errado'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.heroPillsRow}>
             <View style={styles.heroPill}>
               <Text style={styles.heroPillLabel}>IMC</Text>
               <Text style={[styles.heroPillVal, { color: bmiCat.color }]}>
-                {latest.bmi} ({bmiCat.label})
+                {activeLatest.bmi} ({bmiCat.label})
               </Text>
             </View>
             <View style={styles.heroPill}>
-              <Text style={styles.heroPillLabel}>Impedância</Text>
-              <Text style={styles.heroPillVal}>{latest.impedanceOhm} Ω</Text>
+              <Text style={styles.heroPillLabel}>Média ({periodFilter === 'all' ? 'Geral' : DAY_PERIOD_INFO[periodFilter].label})</Text>
+              <Text style={styles.heroPillVal}>{avgWeight} kg</Text>
             </View>
             <View style={styles.heroPill}>
-              <Text style={styles.heroPillLabel}>Meta</Text>
-              <Text style={styles.heroPillVal}>{profile.targetWeightKg} kg</Text>
+              <Text style={styles.heroPillLabel}>Mín / Máx</Text>
+              <Text style={styles.heroPillVal}>
+                {minWeight} / {maxWeight} kg
+              </Text>
             </View>
           </View>
         </View>
@@ -392,8 +614,8 @@ export default function App() {
           </View>
         </View>
 
-        {/* Gráfico Interativo */}
-        <TrendChart data={history} />
+        {/* Gráfico Interativo Filtrado pelo Turno */}
+        <TrendChart data={statsSource} />
 
         {/* Grade Completa de Bioimpedância */}
         <Text style={styles.sectionHeader}>Composição Corporal Completa (BIA)</Text>
@@ -403,8 +625,8 @@ export default function App() {
               <Flame size={18} color="#F43F5E" />
               <Text style={styles.metricName}>Gordura Corporal</Text>
             </View>
-            <Text style={styles.metricNumber}>{latest.bodyFatPercent}%</Text>
-            <Text style={styles.metricSub}>{latest.fatMassKg} kg de massa gorda</Text>
+            <Text style={styles.metricNumber}>{activeLatest.bodyFatPercent}%</Text>
+            <Text style={styles.metricSub}>{activeLatest.fatMassKg} kg de massa gorda</Text>
           </View>
 
           <View style={styles.metricCard}>
@@ -412,8 +634,8 @@ export default function App() {
               <Dumbbell size={18} color="#10B981" />
               <Text style={styles.metricName}>Massa Muscular</Text>
             </View>
-            <Text style={styles.metricNumber}>{latest.muscleMassKg} kg</Text>
-            <Text style={styles.metricSub}>{latest.musclePercent}% do peso total</Text>
+            <Text style={styles.metricNumber}>{activeLatest.muscleMassKg} kg</Text>
+            <Text style={styles.metricSub}>{activeLatest.musclePercent}% do peso total</Text>
           </View>
 
           <View style={styles.metricCard}>
@@ -421,8 +643,8 @@ export default function App() {
               <Droplets size={18} color="#38BDF8" />
               <Text style={styles.metricName}>Água Corporal</Text>
             </View>
-            <Text style={styles.metricNumber}>{latest.waterPercent}%</Text>
-            <Text style={styles.metricSub}>Massa magra: {latest.leanBodyMassKg} kg</Text>
+            <Text style={styles.metricNumber}>{activeLatest.waterPercent}%</Text>
+            <Text style={styles.metricSub}>Massa magra: {activeLatest.leanBodyMassKg} kg</Text>
           </View>
 
           <View style={styles.metricCard}>
@@ -430,9 +652,9 @@ export default function App() {
               <Activity size={18} color="#F59E0B" />
               <Text style={styles.metricName}>Gordura Visceral</Text>
             </View>
-            <Text style={styles.metricNumber}>Nível {latest.visceralFat}</Text>
+            <Text style={styles.metricNumber}>Nível {activeLatest.visceralFat}</Text>
             <Text style={styles.metricSub}>
-              {latest.visceralFat <= 9 ? 'Saudável (< 10)' : 'Atenção (>= 10)'}
+              {activeLatest.visceralFat <= 9 ? 'Saudável (< 10)' : 'Atenção (>= 10)'}
             </Text>
           </View>
 
@@ -441,8 +663,8 @@ export default function App() {
               <Cpu size={18} color="#A855F7" />
               <Text style={styles.metricName}>Metabolismo Basal</Text>
             </View>
-            <Text style={styles.metricNumber}>{latest.bmrKcal} kcal</Text>
-            <Text style={styles.metricSub}>Idade metabólica: {latest.metabolicAge} anos</Text>
+            <Text style={styles.metricNumber}>{activeLatest.bmrKcal} kcal</Text>
+            <Text style={styles.metricSub}>Idade metabólica: {activeLatest.metabolicAge} anos</Text>
           </View>
 
           <View style={styles.metricCard}>
@@ -450,8 +672,8 @@ export default function App() {
               <Scale size={18} color="#EC4899" />
               <Text style={styles.metricName}>Proteína & Ossos</Text>
             </View>
-            <Text style={styles.metricNumber}>{latest.proteinPercent}%</Text>
-            <Text style={styles.metricSub}>Massa óssea: {latest.boneMassKg} kg</Text>
+            <Text style={styles.metricNumber}>{activeLatest.proteinPercent}%</Text>
+            <Text style={styles.metricSub}>Massa óssea: {activeLatest.boneMassKg} kg</Text>
           </View>
         </View>
       </ScrollView>
@@ -670,60 +892,170 @@ export default function App() {
     );
   };
 
-  const renderScanner = () => (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-      <View style={styles.scannerCard}>
-        <View style={styles.scannerCircle}>
-          <Bluetooth size={42} color={isScanning ? '#38BDF8' : '#94A3B8'} />
-          <Text style={styles.scannerWeightText}>
-            {liveWeight ? `${liveWeight.toFixed(2)} kg` : '--.- kg'}
-          </Text>
-          <Text style={styles.scannerImpText}>
-            {liveImpedance ? `Impedância: ${liveImpedance} Ω` : 'Suba descalço na Wellmix'}
-          </Text>
+  const renderScanner = () => {
+    const autoDetectedPeriod = getDayPeriodFromIso(new Date().toISOString());
+    const autoInfo = DAY_PERIOD_INFO[autoDetectedPeriod];
+
+    return (
+      <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={styles.scannerCard}>
+          <View style={styles.scannerCircle}>
+            <Bluetooth size={42} color={isScanning ? '#38BDF8' : '#94A3B8'} />
+            <Text style={styles.scannerWeightText}>
+              {liveWeight ? `${liveWeight.toFixed(2)} kg` : '--.- kg'}
+            </Text>
+            <Text style={styles.scannerImpText}>
+              {liveImpedance ? `Impedância: ${liveImpedance} Ω` : 'Suba descalço na Wellmix'}
+            </Text>
+          </View>
+
+          {/* Seletor de Turno para Classificar a Pesagem */}
+          <View style={styles.scannerPeriodBox}>
+            <View style={[styles.rowCenter, { marginBottom: 8 }]}>
+              <Clock size={14} color="#38BDF8" />
+              <Text style={styles.scannerPeriodTitle}>
+                Turno desta Pesagem (para comparação justa):
+              </Text>
+            </View>
+            <View style={styles.dashboardPeriodBar}>
+              <TouchableOpacity
+                onPress={() => setScannerPeriodChoice('auto')}
+                style={[
+                  styles.dashboardPeriodChip,
+                  scannerPeriodChoice === 'auto' && {
+                    backgroundColor: '#38BDF825',
+                    borderColor: '#38BDF8',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.dashboardPeriodChipText,
+                    scannerPeriodChoice === 'auto' && {
+                      color: '#38BDF8',
+                      fontWeight: '800',
+                    },
+                  ]}
+                >
+                  🕒 Auto ({autoInfo.icon} {autoInfo.label})
+                </Text>
+              </TouchableOpacity>
+
+              {(['morning', 'afternoon', 'night'] as DayPeriod[]).map((pKey) => {
+                const pInfo = DAY_PERIOD_INFO[pKey];
+                const isSel = scannerPeriodChoice === pKey;
+                return (
+                  <TouchableOpacity
+                    key={pKey}
+                    onPress={() => setScannerPeriodChoice(pKey)}
+                    style={[
+                      styles.dashboardPeriodChip,
+                      isSel && {
+                        backgroundColor: pInfo.color + '25',
+                        borderColor: pInfo.color,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dashboardPeriodChipText,
+                        isSel && { color: pInfo.color, fontWeight: '800' },
+                      ]}
+                    >
+                      {pInfo.icon} {pInfo.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <Text style={styles.scannerStatus}>{bleStatusMsg}</Text>
+
+          <TouchableOpacity
+            style={[styles.primaryBtn, isScanning && { opacity: 0.7 }]}
+            onPress={handleStartRealBleScan}
+            disabled={isScanning}
+          >
+            <Bluetooth size={18} color="#0F172A" />
+            <Text style={styles.primaryBtnText}>
+              {isScanning ? 'Escutando Bluetooth BLE...' : 'Conectar Balança Wellmix (BLE)'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={handleSimulateWellmixWeighIn}
+            disabled={isScanning}
+          >
+            <Sparkles size={18} color="#38BDF8" />
+            <Text style={styles.secondaryBtnText}>
+              Simular Pesagem da Balança Wellmix Agora
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        <Text style={styles.scannerStatus}>{bleStatusMsg}</Text>
-
-        <TouchableOpacity
-          style={[styles.primaryBtn, isScanning && { opacity: 0.7 }]}
-          onPress={handleStartRealBleScan}
-          disabled={isScanning}
-        >
-          <Bluetooth size={18} color="#0F172A" />
-          <Text style={styles.primaryBtnText}>
-            {isScanning ? 'Escutando Bluetooth BLE...' : 'Conectar Balança Wellmix (BLE)'}
+        {/* Últimas Pesagens com Exclusão Rápida caso algum registro saia errado */}
+        <View style={styles.logBox}>
+          <Text style={styles.logTitle}>
+            Últimas Pesagens Registradas (Exclua caso alguma leitura seja inválida)
           </Text>
-        </TouchableOpacity>
+          {history.length === 0 ? (
+            <Text style={styles.logEmpty}>Nenhum registro salvo.</Text>
+          ) : (
+            [...history]
+              .reverse()
+              .slice(0, 5)
+              .map((item) => {
+                const pInfo = DAY_PERIOD_INFO[resolveMeasurementPeriod(item)];
+                const dt = new Date(item.timestamp);
+                const dateLabel = `${String(dt.getDate()).padStart(2, '0')}/${String(
+                  dt.getMonth() + 1
+                ).padStart(2, '0')} ${String(dt.getHours()).padStart(2, '0')}:${String(
+                  dt.getMinutes()
+                ).padStart(2, '0')}`;
+                return (
+                  <View key={item.id} style={styles.recentWeighRow}>
+                    <View>
+                      <Text style={styles.recentWeighMain}>
+                        {item.weightKg} kg • {item.bodyFatPercent}% BF
+                      </Text>
+                      <Text style={styles.recentWeighSub}>
+                        {dateLabel} • {pInfo.icon} {pInfo.label}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.deleteHeroBtn}
+                      onPress={() => handlePromptDeleteMeasurement(item)}
+                    >
+                      <Trash2 size={14} color="#FCA5A5" />
+                      <Text style={styles.deleteHeroBtnText}>
+                        {webConfirmDeleteId === item.id ? 'Confirmar?' : 'Excluir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+          )}
+        </View>
 
-        <TouchableOpacity
-          style={styles.secondaryBtn}
-          onPress={handleSimulateWellmixWeighIn}
-          disabled={isScanning}
-        >
-          <Sparkles size={18} color="#38BDF8" />
-          <Text style={styles.secondaryBtnText}>
-            Simular Pesagem da Balança Wellmix Agora
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.logBox}>
-        <Text style={styles.logTitle}>Inspetor de Pacotes BLE (Protocolo OKOK / Chipsea)</Text>
-        {rawLogs.length === 0 ? (
-          <Text style={styles.logEmpty}>
-            Nenhum pacote capturado ainda. Clique em Pesar ou Simular acima para ver a decodificação Hexadecimal da balança.
-          </Text>
-        ) : (
-          rawLogs.map((log, i) => (
-            <Text key={i} style={styles.logLine}>
-              {log}
+        <View style={styles.logBox}>
+          <Text style={styles.logTitle}>Inspetor de Pacotes BLE (Protocolo OKOK / Chipsea)</Text>
+          {rawLogs.length === 0 ? (
+            <Text style={styles.logEmpty}>
+              Nenhum pacote capturado ainda. Clique em Pesar ou Simular acima para ver a decodificação Hexadecimal da balança.
             </Text>
-          ))
-        )}
-      </View>
-    </ScrollView>
-  );
+          ) : (
+            rawLogs.map((log, i) => (
+              <Text key={i} style={styles.logLine}>
+                {log}
+              </Text>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    );
+  };
 
   const renderAiCoach = () => (
     <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
@@ -1012,6 +1344,10 @@ export default function App() {
             scaleHistory={history}
             bodyHistory={bodyHistory}
             profile={profile}
+            selectedPeriodFilter={periodFilter}
+            onChangePeriodFilter={setPeriodFilter}
+            onDeleteMeasurement={handleDeleteMeasurement}
+            onUpdateMeasurementPeriod={handleUpdateMeasurementPeriod}
           />
         )}
         {activeTab === 'scanner' && renderScanner()}
@@ -1796,5 +2132,97 @@ const styles = StyleSheet.create({
   navLabel: {
     color: '#64748B',
     fontSize: 10,
+  },
+  dashboardPeriodBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  dashboardPeriodChip: {
+    backgroundColor: '#111827',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  dashboardPeriodChipText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  emptyShiftBanner: {
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+  },
+  emptyShiftBannerText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  shiftInlineBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  shiftInlineBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  heroActionsCol: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  deleteHeroBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#7F1D1D55',
+    borderWidth: 1,
+    borderColor: '#EF444470',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  deleteHeroBtnText: {
+    color: '#FCA5A5',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  scannerPeriodBox: {
+    width: '100%',
+    backgroundColor: '#0F172A',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    marginBottom: 12,
+  },
+  scannerPeriodTitle: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  recentWeighRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  recentWeighMain: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  recentWeighSub: {
+    color: '#64748B',
+    fontSize: 11,
+    marginTop: 2,
   },
 });

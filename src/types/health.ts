@@ -2,6 +2,10 @@ export type Sex = 'male' | 'female';
 
 export type AiProvider = 'openrouter' | 'deepseek' | 'gemini' | 'local';
 
+export type DayPeriod = 'morning' | 'afternoon' | 'night';
+
+export type DayPeriodFilter = 'all' | DayPeriod;
+
 export interface UserProfile {
   name: string;
   heightCm: number;
@@ -46,6 +50,7 @@ export interface BioimpedanceMetrics {
   bmrKcal: number;
   metabolicAge: number;
   proteinPercent: number;
+  period?: DayPeriod;
   syncedSamsungHealth?: boolean;
   syncedSupabase?: boolean;
 }

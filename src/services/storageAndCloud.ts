@@ -1,7 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
-import { BioimpedanceMetrics, BodyMeasurementsEntry, UserProfile } from '../types/health';
-import { calculateBioimpedance } from '../utils/bioimpedance';
+import {
+  BioimpedanceMetrics,
+  BodyMeasurementsEntry,
+  DayPeriod,
+  UserProfile,
+} from '../types/health';
+import { calculateBioimpedance, getDayPeriodFromIso } from '../utils/bioimpedance';
 import { calculateAnthropometricIndices } from '../utils/bodyMeasurements';
 
 const STORAGE_KEYS = {
@@ -41,25 +46,37 @@ export async function saveProfile(profile: UserProfile): Promise<void> {
 }
 
 export function generateSeedHistory(profile: UserProfile): BioimpedanceMetrics[] {
-  const now = Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const samples = [
-    { daysAgo: 30, weight: 79.8, imp: 525 },
-    { daysAgo: 21, weight: 79.1, imp: 518 },
-    { daysAgo: 14, weight: 78.4, imp: 512 },
-    { daysAgo: 11, weight: 78.0, imp: 508 },
-    { daysAgo: 8, weight: 77.6, imp: 502 },
-    { daysAgo: 5, weight: 77.3, imp: 498 },
-    { daysAgo: 2, weight: 76.9, imp: 492 },
-    { daysAgo: 0, weight: 76.5, imp: 488 },
+  const now = new Date();
+  const samples: Array<{
+    daysAgo: number;
+    hour: number;
+    minute: number;
+    period: DayPeriod;
+    weight: number;
+    imp: number;
+  }> = [
+    { daysAgo: 30, hour: 7, minute: 30, period: 'morning', weight: 79.8, imp: 525 },
+    { daysAgo: 21, hour: 7, minute: 45, period: 'morning', weight: 79.1, imp: 518 },
+    { daysAgo: 18, hour: 21, minute: 10, period: 'night', weight: 79.7, imp: 514 },
+    { daysAgo: 14, hour: 7, minute: 35, period: 'morning', weight: 78.4, imp: 512 },
+    { daysAgo: 11, hour: 15, minute: 20, period: 'afternoon', weight: 78.3, imp: 506 },
+    { daysAgo: 8, hour: 7, minute: 40, period: 'morning', weight: 77.6, imp: 502 },
+    { daysAgo: 5, hour: 15, minute: 10, period: 'afternoon', weight: 77.7, imp: 496 },
+    { daysAgo: 3, hour: 21, minute: 30, period: 'night', weight: 77.8, imp: 493 },
+    { daysAgo: 2, hour: 7, minute: 30, period: 'morning', weight: 76.9, imp: 492 },
+    { daysAgo: 0, hour: 7, minute: 50, period: 'morning', weight: 76.5, imp: 488 },
   ];
 
   return samples.map((s, idx) => {
-    const m = calculateBioimpedance(s.weight, s.imp, profile);
+    const dt = new Date(now);
+    dt.setDate(dt.getDate() - s.daysAgo);
+    dt.setHours(s.hour, s.minute, 0, 0);
+    const m = calculateBioimpedance(s.weight, s.imp, profile, s.period);
     return {
       ...m,
       id: `seed-${idx}`,
-      timestamp: new Date(now - s.daysAgo * dayMs).toISOString(),
+      timestamp: dt.toISOString(),
+      period: s.period,
       syncedSamsungHealth: true,
     };
   });
@@ -68,9 +85,14 @@ export function generateSeedHistory(profile: UserProfile): BioimpedanceMetrics[]
 export async function loadMeasurements(profile: UserProfile): Promise<BioimpedanceMetrics[]> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.MEASUREMENTS);
-    if (raw) {
+    if (raw !== null) {
       const parsed: BioimpedanceMetrics[] = JSON.parse(raw);
-      if (parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.map((m) => ({
+          ...m,
+          period: m.period || getDayPeriodFromIso(m.timestamp),
+        }));
+      }
     }
   } catch {}
   const seeded = generateSeedHistory(profile);
@@ -83,34 +105,72 @@ export async function addMeasurement(
   profile: UserProfile
 ): Promise<BioimpedanceMetrics[]> {
   const current = await loadMeasurements(profile);
+  const resolvedPeriod = measurement.period || getDayPeriodFromIso(measurement.timestamp);
+  const normalizedMeasurement: BioimpedanceMetrics = {
+    ...measurement,
+    period: resolvedPeriod,
+  };
 
   if (profile.supabaseUrl && profile.supabaseAnonKey) {
     try {
       const supabase = createClient(profile.supabaseUrl, profile.supabaseAnonKey);
       const { error } = await supabase.from('measurements').insert([
         {
-          id: measurement.id,
-          created_at: measurement.timestamp,
-          weight_kg: measurement.weightKg,
-          impedance_ohm: measurement.impedanceOhm,
-          bmi: measurement.bmi,
-          body_fat_percent: measurement.bodyFatPercent,
-          muscle_mass_kg: measurement.muscleMassKg,
-          water_percent: measurement.waterPercent,
-          visceral_fat: measurement.visceralFat,
-          bmr_kcal: measurement.bmrKcal,
-          metabolic_age: measurement.metabolicAge,
+          id: normalizedMeasurement.id,
+          created_at: normalizedMeasurement.timestamp,
+          weight_kg: normalizedMeasurement.weightKg,
+          impedance_ohm: normalizedMeasurement.impedanceOhm,
+          bmi: normalizedMeasurement.bmi,
+          body_fat_percent: normalizedMeasurement.bodyFatPercent,
+          muscle_mass_kg: normalizedMeasurement.muscleMassKg,
+          water_percent: normalizedMeasurement.waterPercent,
+          visceral_fat: normalizedMeasurement.visceralFat,
+          bmr_kcal: normalizedMeasurement.bmrKcal,
+          metabolic_age: normalizedMeasurement.metabolicAge,
         },
       ]);
       if (!error) {
-        measurement.syncedSupabase = true;
+        normalizedMeasurement.syncedSupabase = true;
       }
     } catch (e) {
       console.warn('Erro ao sincronizar com Supabase:', e);
     }
   }
 
-  const updated = [...current, measurement];
+  const updated = [...current, normalizedMeasurement];
+  await AsyncStorage.setItem(STORAGE_KEYS.MEASUREMENTS, JSON.stringify(updated));
+  return updated;
+}
+
+export async function deleteMeasurement(
+  id: string,
+  profile: UserProfile
+): Promise<BioimpedanceMetrics[]> {
+  const current = await loadMeasurements(profile);
+  const updated = current.filter((item) => item.id !== id);
+  await AsyncStorage.setItem(STORAGE_KEYS.MEASUREMENTS, JSON.stringify(updated));
+
+  if (profile.supabaseUrl && profile.supabaseAnonKey) {
+    try {
+      const supabase = createClient(profile.supabaseUrl, profile.supabaseAnonKey);
+      await supabase.from('measurements').delete().eq('id', id);
+    } catch (e) {
+      console.warn('Erro ao remover pesagem do Supabase:', e);
+    }
+  }
+
+  return updated;
+}
+
+export async function updateMeasurementPeriod(
+  id: string,
+  period: DayPeriod,
+  profile: UserProfile
+): Promise<BioimpedanceMetrics[]> {
+  const current = await loadMeasurements(profile);
+  const updated = current.map((item) =>
+    item.id === id ? { ...item, period } : item
+  );
   await AsyncStorage.setItem(STORAGE_KEYS.MEASUREMENTS, JSON.stringify(updated));
   return updated;
 }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import Svg, { Path, Circle, Defs, LinearGradient, Stop, Line, Text as SvgText } from 'react-native-svg';
 import { BioimpedanceMetrics } from '../types/health';
+import { DAY_PERIOD_INFO, resolveMeasurementPeriod } from '../utils/bioimpedance';
 
 interface Props {
   data: BioimpedanceMetrics[];
@@ -45,7 +46,8 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
       padY -
       ((item[selectedMetric] - minVal) / range) * (chartHeight - padY * 2);
     const dateObj = new Date(item.timestamp);
-    const label = `${String(dateObj.getDate()).padStart(2, '0')}/${String(
+    const pIcon = DAY_PERIOD_INFO[resolveMeasurementPeriod(item)].icon;
+    const label = `${pIcon}${String(dateObj.getDate()).padStart(2, '0')}/${String(
       dateObj.getMonth() + 1
     ).padStart(2, '0')}`;
     return { x, y, val: item[selectedMetric], label };

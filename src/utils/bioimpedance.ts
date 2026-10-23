@@ -1,4 +1,50 @@
-import { BioimpedanceMetrics, UserProfile } from '../types/health';
+import { BioimpedanceMetrics, DayPeriod, DayPeriodFilter, UserProfile } from '../types/health';
+
+export const DAY_PERIOD_INFO: Record<
+  DayPeriod,
+  { label: string; shortLabel: string; icon: string; color: string; hoursHint: string }
+> = {
+  morning: {
+    label: 'Manhã',
+    shortLabel: 'Manhã',
+    icon: '☀️',
+    color: '#F59E0B',
+    hoursHint: '04h–11h59',
+  },
+  afternoon: {
+    label: 'Tarde',
+    shortLabel: 'Tarde',
+    icon: '🌤️',
+    color: '#38BDF8',
+    hoursHint: '12h–17h59',
+  },
+  night: {
+    label: 'Noite',
+    shortLabel: 'Noite',
+    icon: '🌙',
+    color: '#A855F7',
+    hoursHint: '18h–03h59',
+  },
+};
+
+export function getDayPeriodFromIso(iso: string): DayPeriod {
+  const hour = new Date(iso).getHours();
+  if (hour >= 4 && hour < 12) return 'morning';
+  if (hour >= 12 && hour < 18) return 'afternoon';
+  return 'night';
+}
+
+export function resolveMeasurementPeriod(item: BioimpedanceMetrics): DayPeriod {
+  return item.period || getDayPeriodFromIso(item.timestamp);
+}
+
+export function filterMeasurementsByPeriod(
+  list: BioimpedanceMetrics[],
+  filter: DayPeriodFilter
+): BioimpedanceMetrics[] {
+  if (filter === 'all') return list;
+  return list.filter((item) => resolveMeasurementPeriod(item) === filter);
+}
 
 function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
@@ -16,7 +62,8 @@ function round1(val: number): number {
 export function calculateBioimpedance(
   weightKg: number,
   impedanceOhm: number,
-  profile: UserProfile
+  profile: UserProfile,
+  customPeriod?: DayPeriod
 ): BioimpedanceMetrics {
   const heightM = profile.heightCm / 100;
   const bmi = round1(weightKg / (heightM * heightM));
@@ -87,9 +134,11 @@ export function calculateBioimpedance(
     clamp(profile.age + fatDiff * 0.75, Math.max(15, profile.age - 12), profile.age + 20)
   );
 
+  const nowIso = new Date().toISOString();
+
   return {
     id: `${Date.now()}`,
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso,
     weightKg: round1(weightKg),
     impedanceOhm: Math.round(impedanceOhm),
     bmi,
@@ -104,6 +153,7 @@ export function calculateBioimpedance(
     bmrKcal,
     metabolicAge,
     proteinPercent,
+    period: customPeriod || getDayPeriodFromIso(nowIso),
   };
 }
 
