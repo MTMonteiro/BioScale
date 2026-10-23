@@ -109,7 +109,7 @@ source ~/.bashrc
 
 # Aceitar licenças e instalar SDKs necessários para Expo 58 + Health Connect
 yes | sdkmanager --licenses
-sdkmanager "platform-tools" "platforms;android-36" "platforms;android-37" "build-tools;36.0.0" "build-tools;37.0.0" "ndk;27.1.12297006"
+sdkmanager "platform-tools" "platforms;android-36" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;37.0.0" "ndk;27.1.12297006"
 ```
 
 ### 3. Gerar o APK direto pelo WSL2 (1 comando)
