@@ -1,0 +1,152 @@
+name: Build Android APK & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão da Release (ex: 1.0.0 ou v1.0.0 - deve ser maior que a última release)'
+        required: true
+        default: '1.0.0'
+        type: string
+      release_notes:
+        description: 'Notas da versão (opcional)'
+        required: false
+        default: 'Release gerada manualmente via GitHub Actions com suporte a balança Wellmix (OKOK BLE), Avatar Paramétrico e Samsung Health.'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Validate Version, Build APK & Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Semantic Version against Latest Release
+        id: version_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          # Remove prefixo 'v' caso o usuário digite v1.0.0
+          CLEAN_INPUT="${INPUT_VERSION#v}"
+
+          # Valida formato X.Y.Z (SemVer)
+          if ! [[ "$CLEAN_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Formato de versão inválido: '$INPUT_VERSION'. Use o padrão SemVer (ex: 1.0.0 ou 1.2.0)."
+            exit 1
+          fi
+
+          # Busca a última release publicada no repositório (se existir)
+          LATEST_TAG=$(gh release view --json tagName --jq '.tagName' 2>/dev/null || echo "")
+
+          if [ -n "$LATEST_TAG" ]; then
+            CLEAN_LATEST="${LATEST_TAG#v}"
+            echo "Última release encontrada: v$CLEAN_LATEST"
+            echo "Nova versão solicitada:   v$CLEAN_INPUT"
+
+            if [ "$CLEAN_INPUT" = "$CLEAN_LATEST" ]; then
+              echo "::error::A versão informada (v$CLEAN_INPUT) é IGUAL à última release (v$CLEAN_LATEST). Informe uma versão superior!"
+              exit 1
+            fi
+
+            # Compara versões usando sort -V (version sort)
+            HIGHEST=$(printf '%s\n%s\n' "$CLEAN_LATEST" "$CLEAN_INPUT" | sort -V | tail -n1)
+            if [ "$HIGHEST" != "$CLEAN_INPUT" ]; then
+              echo "::error::A versão informada (v$CLEAN_INPUT) é INFERIOR à última release (v$CLEAN_LATEST). Não é permitido publicar versão menor!"
+              exit 1
+            fi
+          else
+            echo "Nenhuma release anterior encontrada. Primeira release será v$CLEAN_INPUT!"
+          fi
+
+          echo "version=$CLEAN_INPUT" >> $GITHUB_OUTPUT
+          echo "tag=v$CLEAN_INPUT" >> $GITHUB_OUTPUT
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK (API 36 & 37)
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Platform 36 & Build-Tools
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Update version in app.json and package.json
+        env:
+          NEW_VERSION: ${{ steps.version_check.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = process.env.NEW_VERSION;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+
+            const app = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            app.expo.version = process.env.NEW_VERSION;
+            fs.writeFileSync("app.json", JSON.stringify(app, null, 2));
+          '
+
+      - name: Generate Native Android Project (Expo Prebuild)
+        run: npx expo prebuild --platform android --clean
+
+      - name: Configure Gradle for Release APK (arm64-v8a)
+        run: |
+          echo "android.suppressUnsupportedCompileSdk=36,37" >> android/gradle.properties
+          sed -i 's/reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
+
+      - name: Build Release APK with Gradle
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon -x lint -x checkReleaseAarMetadata
+
+      - name: Rename APK with Version
+        id: apk_file
+        env:
+          VER: ${{ steps.version_check.outputs.version }}
+        run: |
+          APK_NAME="BioScale-AI-v${VER}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "./${APK_NAME}"
+          echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk_file.outputs.apk_name }}
+          path: ./${{ steps.apk_file.outputs.apk_name }}
+
+      - name: Create GitHub Release & Attach APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version_check.outputs.tag }}
+          name: "BioScale AI ${{ steps.version_check.outputs.tag }}"
+          body: |
+            ## BioScale AI ${{ steps.version_check.outputs.tag }}
+            ${{ github.event.inputs.release_notes }}
+
+            ### 📲 Instalação no Android
+            Baixe o arquivo **`${{ steps.apk_file.outputs.apk_name }}`** abaixo em **Assets** e instale no seu celular Android.
+          files: ./${{ steps.apk_file.outputs.apk_name }}
+          draft: false
+          prerelease: false
