@@ -34,16 +34,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          # Remove prefixo 'v' caso o usuário digite v1.0.0
           CLEAN_INPUT="${INPUT_VERSION#v}"
 
-          # Valida formato X.Y.Z (SemVer)
           if ! [[ "$CLEAN_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Formato de versão inválido: '$INPUT_VERSION'. Use o padrão SemVer (ex: 1.0.0 ou 1.2.0)."
             exit 1
           fi
 
-          # Busca a última release publicada no repositório (se existir)
           LATEST_TAG=$(gh release view --json tagName --jq '.tagName' 2>/dev/null || echo "")
 
           if [ -n "$LATEST_TAG" ]; then
@@ -56,7 +53,6 @@ jobs:
               exit 1
             fi
 
-            # Compara versões usando sort -V (version sort)
             HIGHEST=$(printf '%s\n%s\n' "$CLEAN_LATEST" "$CLEAN_INPUT" | sort -V | tail -n1)
             if [ "$HIGHEST" != "$CLEAN_INPUT" ]; then
               echo "::error::A versão informada (v$CLEAN_INPUT) é INFERIOR à última release (v$CLEAN_LATEST). Não é permitido publicar versão menor!"
@@ -81,13 +77,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK (API 36 & 37)
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK Platform 36 & Build-Tools
+      - name: Accept Android SDK Licenses & Install Build Tools
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install npm dependencies
         run: npm install
