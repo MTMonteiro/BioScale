@@ -63,12 +63,16 @@ export function generateSeedHistory(profile: UserProfile): BioimpedanceMetrics[]
     weight: number;
     imp: number;
   }> = [
+    { daysAgo: 180, hour: 7, minute: 30, period: 'morning', weight: 84.6, imp: 558 },
+    { daysAgo: 120, hour: 7, minute: 35, period: 'morning', weight: 82.9, imp: 546 },
+    { daysAgo: 90, hour: 7, minute: 40, period: 'morning', weight: 81.7, imp: 538 },
+    { daysAgo: 60, hour: 7, minute: 25, period: 'morning', weight: 80.8, imp: 531 },
     { daysAgo: 30, hour: 7, minute: 30, period: 'morning', weight: 79.8, imp: 525 },
     { daysAgo: 21, hour: 7, minute: 45, period: 'morning', weight: 79.1, imp: 518 },
     { daysAgo: 18, hour: 21, minute: 10, period: 'night', weight: 79.7, imp: 514 },
     { daysAgo: 14, hour: 7, minute: 35, period: 'morning', weight: 78.4, imp: 512 },
     { daysAgo: 11, hour: 15, minute: 20, period: 'afternoon', weight: 78.3, imp: 506 },
-    { daysAgo: 8, hour: 7, minute: 40, period: 'morning', weight: 77.6, imp: 502 },
+    { daysAgo: 7, hour: 7, minute: 40, period: 'morning', weight: 77.5, imp: 501 },
     { daysAgo: 5, hour: 15, minute: 10, period: 'afternoon', weight: 77.7, imp: 496 },
     { daysAgo: 3, hour: 21, minute: 30, period: 'night', weight: 77.8, imp: 493 },
     { daysAgo: 2, hour: 7, minute: 30, period: 'morning', weight: 76.9, imp: 492 },
@@ -188,6 +192,51 @@ export function generateSeedBodyMeasurements(profile: UserProfile): BodyMeasurem
   const dayMs = 24 * 60 * 60 * 1000;
 
   const entriesRaw = [
+    {
+      daysAgo: 180,
+      raw: {
+        neckCm: 42.0,
+        shouldersCm: 113.0,
+        chestCm: 97.5,
+        bicepsCm: 33.2,
+        forearmCm: 27.2,
+        waistCm: 94.0,
+        abdomenCm: 97.0,
+        hipsCm: 104.5,
+        thighCm: 54.0,
+        calfCm: 36.8,
+      },
+    },
+    {
+      daysAgo: 90,
+      raw: {
+        neckCm: 41.2,
+        shouldersCm: 114.0,
+        chestCm: 98.5,
+        bicepsCm: 33.8,
+        forearmCm: 27.6,
+        waistCm: 91.0,
+        abdomenCm: 94.0,
+        hipsCm: 103.0,
+        thighCm: 55.0,
+        calfCm: 37.1,
+      },
+    },
+    {
+      daysAgo: 60,
+      raw: {
+        neckCm: 40.8,
+        shouldersCm: 114.5,
+        chestCm: 99.0,
+        bicepsCm: 34.2,
+        forearmCm: 27.8,
+        waistCm: 89.8,
+        abdomenCm: 92.8,
+        hipsCm: 102.2,
+        thighCm: 55.5,
+        calfCm: 37.3,
+      },
+    },
     {
       daysAgo: 30,
       raw: {

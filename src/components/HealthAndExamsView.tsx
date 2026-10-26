@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,13 +12,17 @@ import {
 import {
   Activity,
   AlertTriangle,
+  Camera,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  ClipboardPaste,
   Droplets,
+  FileText,
   Flame,
   Footprints,
   FlaskConical,
+  Image as ImageIcon,
   Info,
   Moon,
   Plus,
@@ -28,6 +33,11 @@ import {
   X,
 } from 'lucide-react-native';
 import { obsidianTheme } from '../theme/obsidianTheme';
+import {
+  importLabExamFromPdf,
+  importLabExamFromPhoto,
+  parseBiomarkersFromLabText,
+} from '../services/labExamImportService';
 import {
   BioimpedanceMetrics,
   LabExamEntry,
@@ -249,6 +259,17 @@ export const HealthAndExamsView: React.FC<HealthAndExamsViewProps> = ({
     Partial<Record<BiomarkerFieldKey, string>>
   >({});
 
+  // Photo / PDF / Text Import states
+  const [importingFile, setImportingFile] = useState<boolean>(false);
+  const [importStatusMsg, setImportStatusMsg] = useState<string>('');
+  const [attachmentUri, setAttachmentUri] = useState<string | undefined>(undefined);
+  const [attachmentType, setAttachmentType] = useState<'photo' | 'pdf' | undefined>(
+    undefined
+  );
+  const [attachmentName, setAttachmentName] = useState<string | undefined>(undefined);
+  const [showPasteTextBox, setShowPasteTextBox] = useState<boolean>(false);
+  const [pastedLabText, setPastedLabText] = useState<string>('');
+
   // Evaluate 11 Bioimpedance Metrics
   const evaluatedBioMetrics = useMemo(() => {
     const normalized = normalizeBioMetricsForEvaluator(latestMetrics);
@@ -305,10 +326,16 @@ export const HealthAndExamsView: React.FC<HealthAndExamsViewProps> = ({
   }, [biomarkerInputs.fastingGlucoseMgDl, biomarkerInputs.fastingInsulinUiuMl]);
 
   const handleOpenForm = (prefillFromActive = false) => {
+    setImportStatusMsg('');
+    setShowPasteTextBox(false);
+    setPastedLabText('');
     if (prefillFromActive && activeExam) {
       setExamLabelInput(activeExam.label || 'Check-up Laboratorial');
       setExamDateInput(activeExam.timestamp.split('T')[0] || new Date().toISOString().split('T')[0]);
       setExamNotesInput(activeExam.customNotes || '');
+      setAttachmentUri(activeExam.attachmentUri);
+      setAttachmentType(activeExam.attachmentType);
+      setAttachmentName(activeExam.attachmentName);
       const nextInputs: Partial<Record<BiomarkerFieldKey, string>> = {};
       for (const guide of LAB_BIOMARKERS_GUIDE) {
         const val = activeExam[guide.key];
@@ -321,9 +348,98 @@ export const HealthAndExamsView: React.FC<HealthAndExamsViewProps> = ({
       setExamLabelInput('Check-up Metabólico & Hormonal');
       setExamDateInput(new Date().toISOString().split('T')[0]);
       setExamNotesInput('');
+      setAttachmentUri(undefined);
+      setAttachmentType(undefined);
+      setAttachmentName(undefined);
       setBiomarkerInputs({});
     }
     setShowExamForm(true);
+  };
+
+  const handleImportFromPhoto = async (source: 'camera' | 'gallery') => {
+    setImportingFile(true);
+    setImportStatusMsg('Processando imagem do laudo...');
+    try {
+      const res = await importLabExamFromPhoto(source, profile);
+      if (!res.cancelled) {
+        setShowExamForm(true);
+        setAttachmentUri(res.attachmentUri);
+        setAttachmentType(res.attachmentType);
+        setAttachmentName(res.attachmentName);
+        if (res.suggestedLabel) {
+          setExamLabelInput(res.suggestedLabel);
+        }
+        setBiomarkerInputs((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(res.extractedValues)) {
+            if (typeof v === 'number' && !isNaN(v)) {
+              next[k as BiomarkerFieldKey] = String(v);
+            }
+          }
+          return next;
+        });
+        setImportStatusMsg(res.statusMessage);
+      } else if (res.statusMessage && res.statusMessage !== 'Seleção cancelada.') {
+        setImportStatusMsg(res.statusMessage);
+      } else {
+        setImportStatusMsg('');
+      }
+    } finally {
+      setImportingFile(false);
+    }
+  };
+
+  const handleImportFromPdf = async () => {
+    setImportingFile(true);
+    setImportStatusMsg('Lendo arquivo PDF e extraindo biomarcadores...');
+    try {
+      const res = await importLabExamFromPdf(profile);
+      if (!res.cancelled) {
+        setShowExamForm(true);
+        setAttachmentUri(res.attachmentUri);
+        setAttachmentType(res.attachmentType);
+        setAttachmentName(res.attachmentName);
+        if (res.suggestedLabel) {
+          setExamLabelInput(res.suggestedLabel);
+        }
+        setBiomarkerInputs((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(res.extractedValues)) {
+            if (typeof v === 'number' && !isNaN(v)) {
+              next[k as BiomarkerFieldKey] = String(v);
+            }
+          }
+          return next;
+        });
+        setImportStatusMsg(res.statusMessage);
+      } else {
+        setImportStatusMsg('');
+      }
+    } finally {
+      setImportingFile(false);
+    }
+  };
+
+  const handleExtractFromPastedText = () => {
+    const extracted = parseBiomarkersFromLabText(pastedLabText);
+    setBiomarkerInputs((prev) => {
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(extracted)) {
+        if (typeof v === 'number' && !isNaN(v)) {
+          next[k as BiomarkerFieldKey] = String(v);
+        }
+      }
+      return next;
+    });
+    const count = Object.keys(extracted).length;
+    setImportStatusMsg(
+      count > 0
+        ? `✅ Extraímos ${count} biomarcador(es) do texto colado! Revise abaixo e salve.`
+        : 'Nenhum biomarcador padrão identificado no texto colado. Verifique o formato ou preencha os campos abaixo.'
+    );
+    if (count > 0) {
+      setShowPasteTextBox(false);
+    }
   };
 
   const handleUpdateBiomarkerInput = (key: BiomarkerFieldKey, text: string) => {
@@ -369,11 +485,15 @@ export const HealthAndExamsView: React.FC<HealthAndExamsViewProps> = ({
         label: examLabelInput.trim() || 'Exame de Sangue',
         ...numericFields,
         customNotes: examNotesInput.trim() || undefined,
+        attachmentUri,
+        attachmentType,
+        attachmentName,
       };
 
       await onSaveLabExam(newEntry);
       setSelectedExamId(newEntry.id);
       setShowExamForm(false);
+      setImportStatusMsg('');
     } finally {
       setSavingExam(false);
     }
@@ -800,6 +920,79 @@ export const HealthAndExamsView: React.FC<HealthAndExamsViewProps> = ({
               </TouchableOpacity>
             </View>
 
+            {/* Sleek Action Bar: Importar Laudo por Foto ou PDF */}
+            <View style={styles.importActionBox}>
+              <Text style={styles.importActionOverline}>
+                IMPORTAR LAUDO POR FOTO OU PDF
+              </Text>
+              <View style={styles.importButtonsRow}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.importActionButton}
+                  onPress={() => handleImportFromPhoto('camera')}
+                  disabled={importingFile}
+                >
+                  <Camera size={14} color={obsidianTheme.accent} />
+                  <Text style={styles.importActionButtonText}>📷 Câmera</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.importActionButton}
+                  onPress={() => handleImportFromPhoto('gallery')}
+                  disabled={importingFile}
+                >
+                  <ImageIcon size={14} color={obsidianTheme.statusNormal} />
+                  <Text style={styles.importActionButtonText}>🖼️ Galeria</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.importActionButton}
+                  onPress={handleImportFromPdf}
+                  disabled={importingFile}
+                >
+                  <FileText size={14} color={obsidianTheme.statusAttention} />
+                  <Text style={styles.importActionButtonText}>📄 Arquivo PDF</Text>
+                </TouchableOpacity>
+              </View>
+
+              {importingFile && (
+                <View style={styles.importLoadingBanner}>
+                  <ActivityIndicator size="small" color={obsidianTheme.accent} />
+                  <Text style={styles.importLoadingText}>
+                    {importStatusMsg || 'Processando arquivo...'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Active Exam Attachment Badge / Preview */}
+            {(activeExam?.attachmentName || activeExam?.attachmentUri) && (
+              <View style={styles.activeAttachmentBanner}>
+                {activeExam.attachmentType === 'photo' && activeExam.attachmentUri ? (
+                  <Image
+                    source={{ uri: activeExam.attachmentUri }}
+                    style={styles.activeAttachmentThumb}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <FileText size={16} color={obsidianTheme.accent} />
+                )}
+                <View style={styles.activeAttachmentInfo}>
+                  <Text style={styles.activeAttachmentTitle} numberOfLines={1}>
+                    {activeExam.attachmentType === 'photo' ? '📷' : '📄'} Anexo:{' '}
+                    {activeExam.attachmentName || 'Laudo anexado'}
+                  </Text>
+                  <Text style={styles.activeAttachmentSub}>
+                    {activeExam.attachmentType === 'photo'
+                      ? 'Imagem do exame vinculada a este registro'
+                      : 'Documento PDF vinculado a este registro'}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* Summary KPIs + HOMA-IR Badge if activeExam exists */}
             {activeExam && activeExamReport && (
               <View style={styles.examSummaryPillsRow}>
@@ -924,6 +1117,121 @@ export const HealthAndExamsView: React.FC<HealthAndExamsViewProps> = ({
               <Text style={styles.formSectionSubtitle}>
                 Preencha apenas os marcadores disponíveis no seu laudo. O Coach IA usará esses dados na prescrição.
               </Text>
+
+              {/* Import & Paste Actions inside Registration Form */}
+              <View style={styles.formImportRow}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.formImportBtn}
+                  onPress={() => handleImportFromPhoto('camera')}
+                  disabled={importingFile}
+                >
+                  <Camera size={13} color={obsidianTheme.accent} />
+                  <Text style={styles.formImportBtnText}>📷 Câmera</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.formImportBtn}
+                  onPress={() => handleImportFromPhoto('gallery')}
+                  disabled={importingFile}
+                >
+                  <ImageIcon size={13} color={obsidianTheme.statusNormal} />
+                  <Text style={styles.formImportBtnText}>🖼️ Galeria</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={styles.formImportBtn}
+                  onPress={handleImportFromPdf}
+                  disabled={importingFile}
+                >
+                  <FileText size={13} color={obsidianTheme.statusAttention} />
+                  <Text style={styles.formImportBtnText}>📄 PDF</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[
+                    styles.formImportBtn,
+                    showPasteTextBox && styles.formImportBtnActive,
+                  ]}
+                  onPress={() => setShowPasteTextBox((prev) => !prev)}
+                >
+                  <ClipboardPaste size={13} color={obsidianTheme.accent} />
+                  <Text style={styles.formImportBtnText}>📋 Colar Texto</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Paste Lab Text Box */}
+              {showPasteTextBox && (
+                <View style={styles.pasteTextCard}>
+                  <Text style={styles.inputLabel}>
+                    Cole abaixo o texto copiado do PDF ou laudo online:
+                  </Text>
+                  <TextInput
+                    style={[styles.textInput, styles.pasteTextInput]}
+                    value={pastedLabText}
+                    onChangeText={setPastedLabText}
+                    placeholder="Ex: Glicose: 88 mg/dL, Insulina: 6,2 uUI/mL, Colesterol Total: 175 mg/dL, HDL: 58..."
+                    placeholderTextColor={obsidianTheme.textMuted}
+                    multiline
+                  />
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    style={styles.extractPastedBtn}
+                    onPress={handleExtractFromPastedText}
+                  >
+                    <Sparkles size={14} color="#052E16" />
+                    <Text style={styles.extractPastedBtnText}>
+                      Extrair Valores Automaticamente
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Import Status Banner */}
+              {importStatusMsg.trim().length > 0 && (
+                <View style={styles.importStatusBanner}>
+                  <Sparkles size={15} color={obsidianTheme.accent} />
+                  <Text style={styles.importStatusBannerText}>
+                    {importStatusMsg}
+                  </Text>
+                </View>
+              )}
+
+              {/* Attachment Preview inside Registration Form */}
+              {attachmentUri && (
+                <View style={styles.attachmentPreviewCard}>
+                  <View style={styles.attachmentPreviewHeader}>
+                    <Text style={styles.attachmentPreviewTitle} numberOfLines={1}>
+                      {attachmentType === 'photo'
+                        ? `📷 Foto Anexada: ${attachmentName || 'Imagem do Exame'}`
+                        : `📄 ${attachmentName || 'Laudo.pdf'}`}
+                    </Text>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      style={styles.removeAttachmentBtn}
+                      onPress={() => {
+                        setAttachmentUri(undefined);
+                        setAttachmentType(undefined);
+                        setAttachmentName(undefined);
+                      }}
+                    >
+                      <X size={13} color={obsidianTheme.statusAlert} />
+                      <Text style={styles.removeAttachmentBtnText}>Remover</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {attachmentType === 'photo' && (
+                    <Image
+                      source={{ uri: attachmentUri }}
+                      style={{ width: '100%', height: 180, borderRadius: 12 }}
+                      resizeMode="contain"
+                    />
+                  )}
+                </View>
+              )}
 
               <View style={styles.formMetaRow}>
                 <View style={styles.formMetaColWide}>
@@ -2137,6 +2445,196 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: obsidianTheme.accent,
+  },
+  importActionBox: {
+    backgroundColor: obsidianTheme.surfaceElevated,
+    borderWidth: 1,
+    borderColor: obsidianTheme.borderHighlight,
+    borderRadius: obsidianTheme.radiusMd,
+    padding: 12,
+    gap: 9,
+  },
+  importActionOverline: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: obsidianTheme.textSecondary,
+    textTransform: 'uppercase',
+  },
+  importButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  importActionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: obsidianTheme.bg,
+    borderWidth: 1,
+    borderColor: obsidianTheme.borderHighlight,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: obsidianTheme.radiusSm,
+  },
+  importActionButtonText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: obsidianTheme.textPrimary,
+  },
+  importLoadingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: obsidianTheme.accentSoft,
+    borderWidth: 1,
+    borderColor: obsidianTheme.accentBorder,
+    borderRadius: obsidianTheme.radiusSm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  importLoadingText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: obsidianTheme.accent,
+    flex: 1,
+  },
+  activeAttachmentBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: obsidianTheme.surfaceElevated,
+    borderWidth: 1,
+    borderColor: obsidianTheme.accentBorder,
+    borderRadius: obsidianTheme.radiusSm,
+    padding: 10,
+  },
+  activeAttachmentThumb: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    backgroundColor: obsidianTheme.bg,
+  },
+  activeAttachmentInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  activeAttachmentTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: obsidianTheme.textPrimary,
+  },
+  activeAttachmentSub: {
+    fontSize: 11,
+    color: obsidianTheme.textSecondary,
+  },
+  formImportRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  formImportBtn: {
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: obsidianTheme.surfaceElevated,
+    borderWidth: 1,
+    borderColor: obsidianTheme.borderHighlight,
+    paddingVertical: 8,
+    paddingHorizontal: 9,
+    borderRadius: obsidianTheme.radiusSm,
+  },
+  formImportBtnActive: {
+    backgroundColor: obsidianTheme.accentSoft,
+    borderColor: obsidianTheme.accent,
+  },
+  formImportBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: obsidianTheme.textPrimary,
+  },
+  pasteTextCard: {
+    backgroundColor: obsidianTheme.surfaceElevated,
+    borderWidth: 1,
+    borderColor: obsidianTheme.accentBorder,
+    borderRadius: obsidianTheme.radiusMd,
+    padding: 12,
+    gap: 9,
+  },
+  pasteTextInput: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+    backgroundColor: obsidianTheme.bg,
+  },
+  extractPastedBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: obsidianTheme.accent,
+    paddingVertical: 9,
+    borderRadius: obsidianTheme.radiusSm,
+  },
+  extractPastedBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#052E16',
+  },
+  importStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: obsidianTheme.accentSoft,
+    borderWidth: 1,
+    borderColor: obsidianTheme.accentBorder,
+    borderRadius: obsidianTheme.radiusSm,
+    padding: 10,
+  },
+  importStatusBannerText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: obsidianTheme.textPrimary,
+  },
+  attachmentPreviewCard: {
+    backgroundColor: obsidianTheme.surfaceElevated,
+    borderWidth: 1,
+    borderColor: obsidianTheme.borderHighlight,
+    borderRadius: obsidianTheme.radiusMd,
+    padding: 11,
+    gap: 10,
+  },
+  attachmentPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  attachmentPreviewTitle: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: obsidianTheme.textPrimary,
+  },
+  removeAttachmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: obsidianTheme.statusAlertBg,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  removeAttachmentBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: obsidianTheme.statusAlert,
   },
 });
 export default HealthAndExamsView;

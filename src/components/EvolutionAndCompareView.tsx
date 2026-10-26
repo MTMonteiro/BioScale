@@ -78,6 +78,21 @@ export interface EvolutionAndCompareViewProps {
 
 type BodySubView = 'avatar' | 'compare' | 'records';
 
+type ComparePresetDays = 7 | 30 | 60 | 90 | 180 | 'custom';
+
+const COMPARE_PRESETS: Array<{
+  key: ComparePresetDays;
+  label: string;
+  shortLabel: string;
+}> = [
+  { key: 7, label: 'Últimos 7 dias', shortLabel: '7 dias' },
+  { key: 30, label: 'Últimos 30 dias', shortLabel: '30 dias' },
+  { key: 60, label: 'Últimos 60 dias', shortLabel: '60 dias' },
+  { key: 90, label: 'Últimos 90 dias', shortLabel: '90 dias' },
+  { key: 180, label: 'Últimos 180 dias', shortLabel: '180 dias' },
+  { key: 'custom', label: 'Personalizado', shortLabel: 'Manual' },
+];
+
 const PERIOD_FILTERS: Array<{
   key: DayPeriodFilter;
   label: string;
@@ -335,6 +350,7 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
   >(null);
 
   // Estados do Comparador Antes/Depois (Período B = Anterior, Período A = Atual)
+  const [comparePreset, setComparePreset] = useState<ComparePresetDays>(30);
   const [dateBIdx, setDateBIdx] = useState<number>(0);
   const [dateAIdx, setDateAIdx] = useState<number>(
     Math.max(0, bodyHistory.length - 1)
@@ -354,15 +370,76 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
     effectivePeriodFilter
   );
 
-  useEffect(() => {
-    setDateBIdx(0);
-    setDateAIdx(Math.max(0, bodyHistory.length - 1));
-  }, [bodyHistory.length]);
+  const applyComparePreset = (
+    days: ComparePresetDays,
+    scalePool: BioimpedanceMetrics[],
+    tapePool: BodyMeasurementsEntry[]
+  ) => {
+    setComparePreset(days);
+    if (days === 'custom') {
+      return;
+    }
+
+    const dayMs = days * 24 * 60 * 60 * 1000;
+
+    if (scalePool.length > 0) {
+      const lastScaleIdx = scalePool.length - 1;
+      const latestMs = new Date(scalePool[lastScaleIdx].timestamp).getTime();
+      const targetMs = latestMs - dayMs;
+      let bestIdx = 0;
+      let bestDiff = Math.abs(
+        new Date(scalePool[0].timestamp).getTime() - targetMs
+      );
+      const maxSearchIdx = Math.max(0, lastScaleIdx - 1);
+      for (let i = 0; i <= maxSearchIdx; i++) {
+        const diff = Math.abs(
+          new Date(scalePool[i].timestamp).getTime() - targetMs
+        );
+        if (diff <= bestDiff) {
+          bestDiff = diff;
+          bestIdx = i;
+        }
+      }
+      setScaleAIdx(lastScaleIdx);
+      setScaleBIdx(bestIdx);
+    }
+
+    if (tapePool.length > 0) {
+      const lastBodyIdx = tapePool.length - 1;
+      const latestBodyMs = new Date(tapePool[lastBodyIdx].timestamp).getTime();
+      const targetBodyMs = latestBodyMs - dayMs;
+      let bestBodyIdx = 0;
+      let bestBodyDiff = Math.abs(
+        new Date(tapePool[0].timestamp).getTime() - targetBodyMs
+      );
+      const maxBodySearchIdx = Math.max(0, lastBodyIdx - 1);
+      for (let i = 0; i <= maxBodySearchIdx; i++) {
+        const diff = Math.abs(
+          new Date(tapePool[i].timestamp).getTime() - targetBodyMs
+        );
+        if (diff <= bestBodyDiff) {
+          bestBodyDiff = diff;
+          bestBodyIdx = i;
+        }
+      }
+      setDateAIdx(lastBodyIdx);
+      setDateBIdx(bestBodyIdx);
+    }
+  };
 
   useEffect(() => {
-    setScaleBIdx(0);
-    setScaleAIdx(Math.max(0, filteredScaleHistory.length - 1));
-  }, [filteredScaleHistory.length, effectivePeriodFilter]);
+    const pool =
+      filteredScaleHistory.length > 0 ? filteredScaleHistory : scaleHistory;
+    if (comparePreset !== 'custom') {
+      applyComparePreset(comparePreset, pool, bodyHistory);
+    } else {
+      setDateBIdx(0);
+      setDateAIdx(Math.max(0, bodyHistory.length - 1));
+      setScaleBIdx(0);
+      setScaleAIdx(Math.max(0, pool.length - 1));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bodyHistory.length, filteredScaleHistory.length, effectivePeriodFilter]);
 
   const handleSelectPeriodFilter = (nextFilter: DayPeriodFilter) => {
     setInternalPeriodFilter(nextFilter);
@@ -1076,6 +1153,40 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
     const visceralDelta =
       scaleA && scaleB ? scaleA.visceralFat - scaleB.visceralFat : 0;
 
+    const scaleSpanDays =
+      effectiveScalePool.length >= 2
+        ? (new Date(
+            effectiveScalePool[effectiveScalePool.length - 1].timestamp
+          ).getTime() -
+            new Date(effectiveScalePool[0].timestamp).getTime()) /
+          (24 * 60 * 60 * 1000)
+        : 0;
+    const bodySpanDays =
+      bodyHistory.length >= 2
+        ? (new Date(bodyHistory[bodyHistory.length - 1].timestamp).getTime() -
+            new Date(bodyHistory[0].timestamp).getTime()) /
+          (24 * 60 * 60 * 1000)
+        : 0;
+    const historySpanDays = Math.max(scaleSpanDays, bodySpanDays);
+
+    const refB = scaleB ?? bodyB;
+    const refA = scaleA ?? bodyA;
+    const actualDaysDiff =
+      refA && refB
+        ? Math.max(
+            0,
+            Math.round(
+              (new Date(refA.timestamp).getTime() -
+                new Date(refB.timestamp).getTime()) /
+                (24 * 60 * 60 * 1000)
+            )
+          )
+        : 0;
+    const weeklyWeightRate =
+      actualDaysDiff >= 3 && scaleA && scaleB
+        ? Math.round(((scaleA.weightKg - scaleB.weightKg) / (actualDaysDiff / 7)) * 10) / 10
+        : null;
+
     return (
       <View>
         {renderShiftFilterBar()}
@@ -1090,6 +1201,95 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
               </Text>
             </View>
             <Layers size={18} color={obsidianTheme.accent} />
+          </View>
+
+          {/* Barra de Período de Comparação Rápida (Presets 7, 30, 60, 90, 180 dias + Manual) */}
+          <View style={styles.comparePresetSection}>
+            <View style={styles.comparePresetHeaderRow}>
+              <Clock size={12} color={obsidianTheme.accent} />
+              <Text style={styles.comparePresetEyebrow}>
+                PERÍODO DE COMPARAÇÃO RÁPIDA
+              </Text>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.comparePresetPillsRow}
+            >
+              {COMPARE_PRESETS.map((preset) => {
+                const isSelected = comparePreset === preset.key;
+                const hasCoverage =
+                  typeof preset.key === 'number'
+                    ? historySpanDays >= preset.key * 0.5
+                    : true;
+                return (
+                  <TouchableOpacity
+                    key={String(preset.key)}
+                    onPress={() =>
+                      applyComparePreset(
+                        preset.key,
+                        effectiveScalePool,
+                        bodyHistory
+                      )
+                    }
+                    style={[
+                      styles.comparePresetPill,
+                      isSelected && styles.comparePresetPillActive,
+                    ]}
+                  >
+                    {typeof preset.key === 'number' && hasCoverage && (
+                      <View
+                        style={[
+                          styles.comparePresetDot,
+                          isSelected && styles.comparePresetDotActive,
+                        ]}
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.comparePresetPillText,
+                        isSelected && styles.comparePresetPillTextActive,
+                      ]}
+                    >
+                      {preset.shortLabel}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {refB && refA && (
+              <View style={styles.compareSummaryBanner}>
+                <Text style={styles.compareSummaryBannerText}>
+                  Intervalo real comparado:{' '}
+                  <Text style={styles.compareSummaryBannerStrong}>
+                    {actualDaysDiff} dias
+                  </Text>{' '}
+                  ({formatDateShort(refB.timestamp)} →{' '}
+                  {formatDateShort(refA.timestamp)})
+                </Text>
+                {actualDaysDiff >= 3 && weeklyWeightRate !== null && (
+                  <Text style={styles.compareSummaryRateText}>
+                    Ritmo médio:{' '}
+                    <Text
+                      style={[
+                        styles.compareSummaryBannerStrong,
+                        {
+                          color:
+                            weeklyWeightRate <= 0
+                              ? obsidianTheme.accent
+                              : obsidianTheme.textPrimary,
+                        },
+                      ]}
+                    >
+                      {weeklyWeightRate > 0 ? '+' : ''}
+                      {weeklyWeightRate} kg/semana
+                    </Text>
+                  </Text>
+                )}
+              </View>
+            )}
           </View>
 
           {/* Seletores de Data B (Anterior) e Data A (Atual) para Fita/Avatar */}
@@ -1107,6 +1307,7 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
                       <TouchableOpacity
                         key={entry.id}
                         onPress={() => {
+                          setComparePreset('custom');
                           setDateBIdx(idx);
                           // Sincroniza pesagem mais próxima no seletor B
                           if (effectiveScalePool.length > 0) {
@@ -1166,6 +1367,7 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
                       <TouchableOpacity
                         key={entry.id}
                         onPress={() => {
+                          setComparePreset('custom');
                           setDateAIdx(idx);
                           if (effectiveScalePool.length > 0) {
                             const closest = findClosestScaleEntry(
@@ -1216,7 +1418,10 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
                     return (
                       <TouchableOpacity
                         key={sEntry.id}
-                        onPress={() => setScaleBIdx(idx)}
+                        onPress={() => {
+                          setComparePreset('custom');
+                          setScaleBIdx(idx);
+                        }}
                         style={[
                           styles.datePill,
                           active && styles.datePillAnteriorActive,
@@ -1259,7 +1464,10 @@ export const EvolutionAndCompareView: React.FC<EvolutionAndCompareViewProps> = (
                     return (
                       <TouchableOpacity
                         key={sEntry.id}
-                        onPress={() => setScaleAIdx(idx)}
+                        onPress={() => {
+                          setComparePreset('custom');
+                          setScaleAIdx(idx);
+                        }}
                         style={[
                           styles.datePill,
                           active && styles.datePillAtualActive,
@@ -2465,6 +2673,90 @@ const styles = StyleSheet.create({
     color: obsidianTheme.textMuted,
     fontSize: 10,
     marginTop: 6,
+  },
+  comparePresetSection: {
+    marginTop: 12,
+    marginBottom: 4,
+    backgroundColor: obsidianTheme.bg,
+    borderRadius: obsidianTheme.radiusSm,
+    borderWidth: 1,
+    borderColor: obsidianTheme.border,
+    padding: 10,
+  },
+  comparePresetHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  comparePresetEyebrow: {
+    color: obsidianTheme.accent,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+  },
+  comparePresetPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  comparePresetPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: obsidianTheme.surface,
+    borderWidth: 1,
+    borderColor: obsidianTheme.border,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  comparePresetPillActive: {
+    backgroundColor: obsidianTheme.accentSoft,
+    borderColor: obsidianTheme.accent,
+  },
+  comparePresetDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(16, 185, 129, 0.55)',
+  },
+  comparePresetDotActive: {
+    backgroundColor: obsidianTheme.accent,
+  },
+  comparePresetPillText: {
+    color: obsidianTheme.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  comparePresetPillTextActive: {
+    color: obsidianTheme.accent,
+    fontWeight: '800',
+  },
+  compareSummaryBanner: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: obsidianTheme.border,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  compareSummaryBannerText: {
+    color: obsidianTheme.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  compareSummaryRateText: {
+    color: obsidianTheme.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  compareSummaryBannerStrong: {
+    color: obsidianTheme.textPrimary,
+    fontWeight: '800',
   },
   compareDateSelectorsWrap: {
     flexDirection: 'row',

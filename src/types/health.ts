@@ -135,6 +135,9 @@ export interface LabExamEntry {
   astU_L?: number;
   altU_L?: number;
   customNotes?: string;
+  attachmentUri?: string;
+  attachmentType?: 'photo' | 'pdf';
+  attachmentName?: string;
   syncedSupabase?: boolean;
 }
 

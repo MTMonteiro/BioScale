@@ -44,6 +44,14 @@
       ],
       "react-native-health-connect",
       "llama.rn",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permitir que o BioScale AI acesse suas fotos para importar laudos de exames de sangue.",
+          "cameraPermission": "Permitir que o BioScale AI use a câmera para fotografar laudos de exames de sangue."
+        }
+      ],
+      "expo-document-picker",
       "./plugins/withAndroidGradleFixes"
     ],
     "web": {
