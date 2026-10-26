@@ -13,12 +13,14 @@ import Svg, {
 } from 'react-native-svg';
 import { BodyMeasurementsEntry, BodyPartKey } from '../types/health';
 import { BODY_PARTS_GUIDE } from '../utils/bodyMeasurements';
+import { obsidianTheme } from '../theme/obsidianTheme';
 
-interface Props {
+export interface BodyAvatarSvgProps {
   measurements: Omit<
     BodyMeasurementsEntry,
     'id' | 'timestamp' | 'waistToHipRatio' | 'navyBodyFatEstimate'
   >;
+  bodyFatPercentage?: number;
   selectedPart?: BodyPartKey;
   onSelectPart?: (part: BodyPartKey) => void;
   compact?: boolean;
@@ -31,30 +33,37 @@ function clamp(val: number, min: number, max: number) {
 }
 
 /**
- * Avatar Paramétrico Dinâmico:
+ * Avatar Paramétrico Dinâmico — Dark Obsidian Minimalista
  * Toda a geometria do corpo (pescoço, ombros, peitoral, bíceps, antebraço, cintura, abdômen,
  * quadril, coxas e panturrilhas) é calculada matematicamente em função das medidas (cm) fornecidas.
  * Suporta modo normal (interativo com fita métrica) e modo compacto (lado a lado para comparação de períodos).
  */
-export const BodyAvatarSvg: React.FC<Props> = ({
+export const BodyAvatarSvg: React.FC<BodyAvatarSvgProps> = ({
   measurements,
+  bodyFatPercentage,
   selectedPart = 'waistCm',
   onSelectPart,
   compact = false,
-  accentColor = '#38BDF8',
+  accentColor = obsidianTheme.accent,
   badgeText,
 }) => {
   const cx = 140; // Centro horizontal do Avatar (Canvas 280 x 380)
   const svgWidth = compact ? 158 : 280;
   const svgHeight = compact ? 225 : 380;
 
+  // Fator sutil adicional caso bodyFatPercentage seja informado
+  const bfFactor =
+    typeof bodyFatPercentage === 'number'
+      ? clamp((bodyFatPercentage - 16) * 0.15, -1.5, 3.5)
+      : 0;
+
   // Escalas proporcionais reais (meia-largura em pixels a partir do centro cx = 140)
   const neckW = clamp((measurements.neckCm / 38) * 11.5, 8, 18);
   const shoulderW = clamp((measurements.shouldersCm / 118) * 44, 30, 62);
   const chestW = clamp((measurements.chestCm / 102) * 34, 23, 50);
-  const waistW = clamp((measurements.waistCm / 82) * 26, 17, 46);
-  const abdomenW = clamp((measurements.abdomenCm / 85) * 28, 18, 49);
-  const hipW = clamp((measurements.hipsCm / 98) * 33, 24, 50);
+  const waistW = clamp((measurements.waistCm / 82) * 26 + bfFactor, 17, 46);
+  const abdomenW = clamp((measurements.abdomenCm / 85) * 28 + bfFactor * 1.1, 18, 49);
+  const hipW = clamp((measurements.hipsCm / 98) * 33 + bfFactor * 0.5, 24, 50);
 
   // Espessuras dos membros
   const bicepThick = clamp((measurements.bicepsCm / 36) * 13.5, 8.5, 22);
@@ -165,6 +174,7 @@ export const BodyAvatarSvg: React.FC<Props> = ({
 
   const activeGuide = BODY_PARTS_GUIDE[selectedPart];
   const activeTape = getTapeMeasureGeometry(selectedPart);
+  const tapeStrokeColor = obsidianTheme.accent;
 
   const hotspots: Array<{ part: BodyPartKey; x: number; y: number }> = [
     { part: 'neckCm', x: cx, y: 66 },
@@ -179,37 +189,49 @@ export const BodyAvatarSvg: React.FC<Props> = ({
     { part: 'calfCm', x: cx + 9 + calfThick * 0.5, y: yCalfMid },
   ];
 
+  const effectiveBadgeText =
+    badgeText ||
+    (!compact && typeof bodyFatPercentage === 'number'
+      ? `BF ${bodyFatPercentage.toFixed(1)}%`
+      : undefined);
+
   return (
     <View style={[styles.wrapper, compact && styles.wrapperCompact]}>
       <Svg width={svgWidth} height={svgHeight} viewBox="0 0 280 380">
         <Defs>
-          <LinearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0%" stopColor={accentColor} stopOpacity="0.45" />
-            <Stop offset="50%" stopColor="#6366F1" stopOpacity="0.35" />
-            <Stop offset="100%" stopColor="#10B981" stopOpacity="0.40" />
+          {/* Gradiente Monocromático Titanium / Obsidian com toque Esmeralda Biométrico */}
+          <LinearGradient id="obsidianSilhouetteGrad" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0%" stopColor="#2B3145" stopOpacity="0.88" />
+            <Stop offset="50%" stopColor="#1E2330" stopOpacity="0.92" />
+            <Stop offset="100%" stopColor="#12141C" stopOpacity="0.96" />
+          </LinearGradient>
+          <LinearGradient id="silhouetteStrokeGrad" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0%" stopColor={accentColor} stopOpacity="0.75" />
+            <Stop offset="50%" stopColor="#475569" stopOpacity="0.55" />
+            <Stop offset="100%" stopColor={accentColor} stopOpacity="0.65" />
           </LinearGradient>
         </Defs>
 
-        {/* Grade de fundo biométrica */}
+        {/* Grade de fundo biométrica sutil em Titanium (#1E2230) */}
         {[60, 120, 180, 240, 300, 360].map((gy) => (
           <Line
             key={gy}
-            x1={20}
+            x1={18}
             y1={gy}
-            x2={260}
+            x2={262}
             y2={gy}
-            stroke="#1E293B"
-            strokeDasharray="3 3"
+            stroke={obsidianTheme.border}
+            strokeDasharray="3 5"
             strokeWidth="1"
           />
         ))}
         <Line
           x1={cx}
-          y1={15}
+          y1={14}
           x2={cx}
-          y2={370}
-          stroke="#1E293B"
-          strokeDasharray="4 4"
+          y2={368}
+          stroke={obsidianTheme.border}
+          strokeDasharray="3 5"
           strokeWidth="1"
         />
 
@@ -217,121 +239,166 @@ export const BodyAvatarSvg: React.FC<Props> = ({
         <Circle
           cx={cx}
           cy={36}
-          r={19}
-          fill="url(#bodyGrad)"
-          stroke={accentColor}
-          strokeWidth="2"
+          r={18.5}
+          fill="url(#obsidianSilhouetteGrad)"
+          stroke="url(#silhouetteStrokeGrad)"
+          strokeWidth="1.6"
         />
 
         {/* Braços Paramétricos */}
         <Path
           d={leftArmPath}
-          fill="url(#bodyGrad)"
-          stroke={accentColor}
-          strokeWidth="1.8"
+          fill="url(#obsidianSilhouetteGrad)"
+          stroke="url(#silhouetteStrokeGrad)"
+          strokeWidth="1.5"
           strokeLinejoin="round"
         />
         <Path
           d={rightArmPath}
-          fill="url(#bodyGrad)"
-          stroke={accentColor}
-          strokeWidth="1.8"
+          fill="url(#obsidianSilhouetteGrad)"
+          stroke="url(#silhouetteStrokeGrad)"
+          strokeWidth="1.5"
           strokeLinejoin="round"
         />
 
         {/* Tronco + Pernas Paramétricos */}
         <Path
           d={torsoAndLegsPath}
-          fill="url(#bodyGrad)"
-          stroke={accentColor}
-          strokeWidth="2.2"
+          fill="url(#obsidianSilhouetteGrad)"
+          stroke="url(#silhouetteStrokeGrad)"
+          strokeWidth="1.8"
           strokeLinejoin="round"
         />
 
-        {/* Linhas anatômicas de definição */}
+        {/* Contornos anatômicos minimalistas */}
         <Path
-          d={`M ${cx - chestW * 0.75} ${yChest + 4} Q ${cx - chestW * 0.35} ${yChest + 10} ${cx - 2} ${yChest + 2}`}
-          stroke="#7DD3FC"
-          strokeOpacity="0.45"
-          strokeWidth="1.5"
+          d={`M ${cx - chestW * 0.75} ${yChest + 4} Q ${cx - chestW * 0.35} ${yChest + 9} ${cx - 3} ${yChest + 2}`}
+          stroke="#64748B"
+          strokeOpacity="0.38"
+          strokeWidth="1.2"
           fill="none"
         />
         <Path
-          d={`M ${cx + chestW * 0.75} ${yChest + 4} Q ${cx + chestW * 0.35} ${yChest + 10} ${cx + 2} ${yChest + 2}`}
-          stroke="#7DD3FC"
-          strokeOpacity="0.45"
-          strokeWidth="1.5"
+          d={`M ${cx + chestW * 0.75} ${yChest + 4} Q ${cx + chestW * 0.35} ${yChest + 9} ${cx + 3} ${yChest + 2}`}
+          stroke="#64748B"
+          strokeOpacity="0.38"
+          strokeWidth="1.2"
           fill="none"
         />
-        <Circle cx={cx} cy={yAbdomen} r={2} fill="#7DD3FC" opacity={0.6} />
+        <Line
+          x1={cx}
+          y1={yChest + 6}
+          x2={cx}
+          y2={yAbdomen - 6}
+          stroke="#64748B"
+          strokeOpacity="0.22"
+          strokeWidth="1"
+        />
+        <Circle cx={cx} cy={yAbdomen} r={1.8} fill="#64748B" opacity={0.5} />
 
-        {/* Fita Métrica Destacada na Região Selecionada */}
+        {/* Fita Métrica Biométrica Esmeralda na Região Selecionada */}
         <G>
+          {/* Glow externo sutil */}
           <Line
-            x1={activeTape.x1 - 6}
+            x1={activeTape.x1 - 7}
             y1={activeTape.y}
-            x2={activeTape.x2 + 6}
+            x2={activeTape.x2 + 7}
             y2={activeTape.y}
-            stroke={activeGuide.color}
-            strokeWidth="4.5"
+            stroke={tapeStrokeColor}
+            strokeOpacity="0.28"
+            strokeWidth="8"
             strokeLinecap="round"
           />
+          {/* Linha principal esmeralda */}
           <Line
-            x1={activeTape.x1 - 6}
+            x1={activeTape.x1 - 5}
             y1={activeTape.y}
-            x2={activeTape.x2 + 6}
+            x2={activeTape.x2 + 5}
             y2={activeTape.y}
-            stroke="#FFFFFF"
-            strokeWidth="1.5"
-            strokeDasharray="3 3"
+            stroke={tapeStrokeColor}
+            strokeWidth="3"
+            strokeLinecap="round"
           />
+          {/* Marcações de fita métrica */}
+          <Line
+            x1={activeTape.x1 - 4}
+            y1={activeTape.y}
+            x2={activeTape.x2 + 4}
+            y2={activeTape.y}
+            stroke="#F8FAFC"
+            strokeOpacity="0.75"
+            strokeWidth="1"
+            strokeDasharray="2 3"
+          />
+
           {!compact && (
-            <>
+            <G>
+              {/* Linha guia ligando a fita ao pill lateral */}
+              <Line
+                x1={80}
+                y1={clamp(activeTape.y, 22, 355)}
+                x2={activeTape.x1 - 6}
+                y2={activeTape.y}
+                stroke={tapeStrokeColor}
+                strokeOpacity="0.45"
+                strokeWidth="1"
+                strokeDasharray="2 2"
+              />
               <Rect
-                x={8}
-                y={clamp(activeTape.y - 13, 10, 345)}
-                width={68}
-                height={24}
-                rx={7}
-                fill="#0F172A"
-                stroke={activeGuide.color}
-                strokeWidth="1.5"
+                x={6}
+                y={clamp(activeTape.y - 16, 8, 340)}
+                width={74}
+                height={32}
+                rx={9}
+                fill={obsidianTheme.surface}
+                stroke={tapeStrokeColor}
+                strokeWidth="1.2"
               />
               <SvgText
-                x={42}
-                y={clamp(activeTape.y + 3, 26, 361)}
-                fill="#F8FAFC"
+                x={43}
+                y={clamp(activeTape.y - 3, 21, 353)}
+                fill={obsidianTheme.textSecondary}
+                fontSize="8.5"
+                fontWeight="600"
+                textAnchor="middle"
+              >
+                {activeGuide.shortLabel.toUpperCase()}
+              </SvgText>
+              <SvgText
+                x={43}
+                y={clamp(activeTape.y + 10, 34, 366)}
+                fill={obsidianTheme.textPrimary}
                 fontSize="11"
                 fontWeight="bold"
                 textAnchor="middle"
               >
                 {`${measurements[selectedPart]} cm`}
               </SvgText>
-            </>
+            </G>
           )}
         </G>
 
-        {badgeText && (
+        {effectiveBadgeText && (
           <G>
             <Rect
-              x={70}
-              y={346}
-              width={140}
-              height={26}
+              x={68}
+              y={347}
+              width={144}
+              height={25}
               rx={8}
-              fill="#0F172A"
+              fill={obsidianTheme.surface}
               stroke={accentColor}
-              strokeWidth="1.5"
+              strokeWidth="1.2"
             />
             <SvgText
               x={140}
               y={363}
-              fill="#F8FAFC"
-              fontSize="13"
+              fill={obsidianTheme.textPrimary}
+              fontSize="12"
               fontWeight="bold"
               textAnchor="middle"
             >
-              {badgeText}
+              {effectiveBadgeText}
             </SvgText>
           </G>
         )}
@@ -341,19 +408,24 @@ export const BodyAvatarSvg: React.FC<Props> = ({
           onSelectPart &&
           hotspots.map((h) => {
             const isSelected = h.part === selectedPart;
-            const color = BODY_PARTS_GUIDE[h.part].color;
             return (
               <G key={h.part} onPress={() => onSelectPart(h.part)}>
                 {isSelected && (
-                  <Circle cx={h.x} cy={h.y} r={11} fill={color} opacity={0.28} />
+                  <Circle
+                    cx={h.x}
+                    cy={h.y}
+                    r={11}
+                    fill={obsidianTheme.accent}
+                    opacity={0.24}
+                  />
                 )}
                 <Circle
                   cx={h.x}
                   cy={h.y}
-                  r={isSelected ? 6 : 4.5}
-                  fill={isSelected ? color : '#0F172A'}
-                  stroke={color}
-                  strokeWidth="2"
+                  r={isSelected ? 5.5 : 4}
+                  fill={isSelected ? obsidianTheme.accent : obsidianTheme.surface}
+                  stroke={isSelected ? '#F8FAFC' : '#64748B'}
+                  strokeWidth={isSelected ? '1.8' : '1.4'}
                 />
               </G>
             );
@@ -367,15 +439,16 @@ const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0B1120',
-    borderRadius: 20,
-    paddingVertical: 8,
+    backgroundColor: obsidianTheme.bg,
+    borderRadius: obsidianTheme.radiusLg,
+    paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: obsidianTheme.border,
   },
   wrapperCompact: {
-    paddingVertical: 4,
-    paddingHorizontal: 2,
-    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: obsidianTheme.radiusMd,
+    backgroundColor: obsidianTheme.bg,
   },
 });

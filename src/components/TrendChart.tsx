@@ -3,21 +3,28 @@ import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-nati
 import Svg, { Path, Circle, Defs, LinearGradient, Stop, Line, Text as SvgText } from 'react-native-svg';
 import { BioimpedanceMetrics } from '../types/health';
 import { DAY_PERIOD_INFO, resolveMeasurementPeriod } from '../utils/bioimpedance';
+import { obsidianTheme } from '../theme/obsidianTheme';
 
-interface Props {
+export interface TrendChartProps {
   data: BioimpedanceMetrics[];
+  title?: string;
+  color?: string;
 }
 
 type MetricKey = 'weightKg' | 'bodyFatPercent' | 'muscleMassKg' | 'waterPercent';
 
-const METRIC_CONFIG: Record<MetricKey, { label: string; unit: string; color: string }> = {
-  weightKg: { label: 'Peso', unit: 'kg', color: '#38BDF8' },
-  bodyFatPercent: { label: 'Gordura', unit: '%', color: '#F43F5E' },
-  muscleMassKg: { label: 'Músculo', unit: 'kg', color: '#10B981' },
-  waterPercent: { label: 'Água', unit: '%', color: '#6366F1' },
+const METRIC_CONFIG: Record<MetricKey, { label: string; unit: string }> = {
+  weightKg: { label: 'Peso', unit: 'kg' },
+  bodyFatPercent: { label: 'Gordura', unit: '%' },
+  muscleMassKg: { label: 'Músculo', unit: 'kg' },
+  waterPercent: { label: 'Água', unit: '%' },
 };
 
-export const TrendChart: React.FC<Props> = ({ data }) => {
+export const TrendChart: React.FC<TrendChartProps> = ({
+  data,
+  title = 'Evolução Histórica',
+  color = obsidianTheme.accent,
+}) => {
   const [selectedMetric, setSelectedMetric] = useState<MetricKey>('weightKg');
 
   const recent = data.slice(-7);
@@ -64,7 +71,12 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>Evolução Histórica</Text>
+        <View style={styles.titleBlock}>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>
+            {cfg.label} ({cfg.unit}) • Últimos {recent.length} registros
+          </Text>
+        </View>
         <View style={styles.tabsRow}>
           {(Object.keys(METRIC_CONFIG) as MetricKey[]).map((key) => {
             const active = key === selectedMetric;
@@ -72,15 +84,19 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
               <TouchableOpacity
                 key={key}
                 onPress={() => setSelectedMetric(key)}
+                activeOpacity={0.75}
                 style={[
                   styles.tabButton,
-                  active && { backgroundColor: METRIC_CONFIG[key].color + '25', borderColor: METRIC_CONFIG[key].color },
+                  active && {
+                    backgroundColor: obsidianTheme.accentSoft,
+                    borderColor: color,
+                  },
                 ]}
               >
                 <Text
                   style={[
                     styles.tabText,
-                    active && { color: METRIC_CONFIG[key].color, fontWeight: '700' },
+                    active && { color: color, fontWeight: '700' },
                   ]}
                 >
                   {METRIC_CONFIG[key].label}
@@ -94,8 +110,8 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
       <Svg width={chartWidth} height={chartHeight}>
         <Defs>
           <LinearGradient id="gradArea" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0%" stopColor={cfg.color} stopOpacity="0.38" />
-            <Stop offset="100%" stopColor={cfg.color} stopOpacity="0.0" />
+            <Stop offset="0%" stopColor={color} stopOpacity="0.22" />
+            <Stop offset="100%" stopColor={color} stopOpacity="0.0" />
           </LinearGradient>
         </Defs>
 
@@ -109,7 +125,7 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
               y1={y}
               x2={chartWidth - padX}
               y2={y}
-              stroke="#1E293B"
+              stroke={obsidianTheme.border}
               strokeDasharray="4 4"
               strokeWidth="1"
             />
@@ -118,16 +134,23 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
 
         {points.length > 1 && <Path d={areaPath} fill="url(#gradArea)" />}
         {points.length > 1 && (
-          <Path d={linePath} fill="none" stroke={cfg.color} strokeWidth="3" strokeLinecap="round" />
+          <Path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
         )}
 
         {points.map((p, idx) => (
           <React.Fragment key={idx}>
-            <Circle cx={p.x} cy={p.y} r="4.5" fill="#0F172A" stroke={cfg.color} strokeWidth="2.5" />
+            <Circle
+              cx={p.x}
+              cy={p.y}
+              r="4.5"
+              fill={obsidianTheme.bg}
+              stroke={color}
+              strokeWidth="2.5"
+            />
             <SvgText
               x={p.x}
               y={p.y - 10}
-              fill="#F8FAFC"
+              fill={obsidianTheme.textPrimary}
               fontSize="10"
               fontWeight="bold"
               textAnchor="middle"
@@ -137,7 +160,7 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
             <SvgText
               x={p.x}
               y={chartHeight - 6}
-              fill="#64748B"
+              fill={obsidianTheme.textMuted}
               fontSize="10"
               textAnchor="middle"
             >
@@ -152,21 +175,29 @@ export const TrendChart: React.FC<Props> = ({ data }) => {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#111827',
-    borderRadius: 20,
+    backgroundColor: obsidianTheme.surface,
+    borderRadius: obsidianTheme.radiusLg,
     padding: 16,
     marginVertical: 10,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: obsidianTheme.border,
   },
   headerRow: {
     marginBottom: 12,
     gap: 10,
   },
+  titleBlock: {
+    gap: 2,
+  },
   title: {
-    color: '#F8FAFC',
-    fontSize: 16,
+    color: obsidianTheme.textPrimary,
+    fontSize: 15,
     fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  subtitle: {
+    color: obsidianTheme.textMuted,
+    fontSize: 11,
   },
   tabsRow: {
     flexDirection: 'row',
@@ -174,15 +205,16 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabButton: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 11,
     paddingVertical: 5,
-    borderRadius: 12,
+    borderRadius: obsidianTheme.radiusSm,
     borderWidth: 1,
-    borderColor: '#334155',
-    backgroundColor: '#0F172A',
+    borderColor: obsidianTheme.border,
+    backgroundColor: obsidianTheme.bg,
   },
   tabText: {
-    color: '#94A3B8',
+    color: obsidianTheme.textSecondary,
     fontSize: 12,
+    fontWeight: '500',
   },
 });

@@ -7,25 +7,16 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
-  Platform,
 } from 'react-native';
 import {
   Sparkles,
   Settings,
-  Download,
-  Trash2,
-  CheckCircle2,
   Dumbbell,
   Apple,
   Moon,
   FlaskConical,
   MessageSquare,
   Send,
-  Cpu,
-  AlertTriangle,
-  Plus,
-  XCircle,
 } from 'lucide-react-native';
 import {
   BioimpedanceMetrics,
@@ -33,37 +24,24 @@ import {
   CoachChatMessage,
   CoachPersona,
   LabExamEntry,
-  LocalGemmaModelSpec,
   SamsungHealthSummary,
   StructuredCoachPlan,
   TrainingGoal,
   UserProfile,
 } from '../types/health';
+import { evaluateFullLabExam } from '../utils/labExams';
 import {
-  BIOMARKER_CATEGORIES,
-  BiomarkerCategory,
-  BiomarkerFieldKey,
-  calculateHomaIr,
-  evaluateFullLabExam,
-  LAB_BIOMARKERS_GUIDE,
-} from '../utils/labExams';
-import {
-  cancelActiveModelDownload,
-  deleteDownloadedGemmaModel,
-  DownloadedModelStatus,
-  downloadLocalGemmaModel,
-  getAllModelsDownloadStatus,
+  checkModelDownloaded,
   getModelSpecById,
-  isLocalGemmaLoadedInRam,
-  LOCAL_GEMMA_MODELS,
 } from '../services/localModelService';
 import {
   askCoachInteractiveQuestion,
   computeBioHealthScore,
 } from '../services/aiCoachService';
 import { CoachAvatarSvg } from './CoachAvatarSvg';
+import { obsidianTheme } from '../theme/obsidianTheme';
 
-interface Props {
+export interface AiCoachHubViewProps {
   history: BioimpedanceMetrics[];
   bodyHistory: BodyMeasurementsEntry[];
   labExams: LabExamEntry[];
@@ -74,27 +52,20 @@ interface Props {
   streamingPreview: string;
   onGenerateAnalysis: () => void;
   onUpdateProfile: (next: UserProfile) => void;
-  onSaveLabExam: (
+  onSaveLabExam?: (
     exam: Omit<LabExamEntry, 'id' | 'timestamp' | 'homaIr'>
   ) => Promise<void>;
-  onDeleteLabExam: (id: string) => Promise<void>;
-  onOpenSettings: () => void;
+  onDeleteLabExam?: (id: string) => Promise<void>;
+  onOpenSettings?: () => void;
 }
 
-type CoachSubTab =
-  | 'overview'
-  | 'training'
-  | 'nutrition'
-  | 'habits'
-  | 'exams'
-  | 'chat'
-  | 'local_models';
+type CoachSubTab = 'overview' | 'training' | 'nutrition' | 'chat';
 
 const TRAINING_GOALS: Array<{ key: TrainingGoal; label: string }> = [
-  { key: 'recomposition', label: '⚡ Recomposição' },
-  { key: 'fat_loss', label: '🔥 Secar Gordura' },
-  { key: 'hypertrophy', label: '💪 Hipertrofia' },
-  { key: 'longevity', label: '🧬 Saúde & Exames' },
+  { key: 'recomposition', label: 'Recomposição' },
+  { key: 'fat_loss', label: 'Cutting' },
+  { key: 'hypertrophy', label: 'Hipertrofia' },
+  { key: 'longevity', label: 'Longevidade' },
 ];
 
 const QUICK_QUESTIONS = [
@@ -104,7 +75,7 @@ const QUICK_QUESTIONS = [
   'Como reduzir gordura visceral e melhorar meu sono?',
 ];
 
-export const AiCoachHubView: React.FC<Props> = ({
+export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
   history,
   bodyHistory,
   labExams,
@@ -115,53 +86,11 @@ export const AiCoachHubView: React.FC<Props> = ({
   streamingPreview,
   onGenerateAnalysis,
   onUpdateProfile,
-  onSaveLabExam,
-  onDeleteLabExam,
   onOpenSettings,
 }) => {
   const [subTab, setSubTab] = useState<CoachSubTab>('overview');
-
-  // Estados do Gerenciador de Modelos Locais Gemma (GGUF)
-  const [downloadedMap, setDownloadedMap] = useState<
-    Record<string, DownloadedModelStatus>
-  >({});
-  const [downloadingModelId, setDownloadingModelId] = useState<string | null>(
-    null
-  );
-  const [downloadProgress, setDownloadProgress] = useState<{
-    progressPercent: number;
-    downloadedMb: number;
-    totalMb: number;
-  }>({ progressPercent: 0, downloadedMb: 0, totalMb: 0 });
-  const [modelStatusMsg, setModelStatusMsg] = useState<string>('');
-
-  // Estados do Formulário de Exames Laboratoriais
-  const [examCategory, setExamCategory] =
-    useState<BiomarkerCategory>('glycemic');
-  const [showNewExamForm, setShowNewExamForm] = useState<boolean>(false);
-  const [examLabel, setExamLabel] = useState<string>('Check-up de Sangue');
-  const [examNotes, setExamNotes] = useState<string>('');
-  const [examInputs, setExamInputs] = useState<Record<string, string>>({
-    fastingGlucoseMgDl: '89',
-    hba1cPercent: '5.2',
-    fastingInsulinUiuMl: '6.8',
-    totalCholesterolMgDl: '178',
-    hdlMgDl: '52',
-    ldlMgDl: '98',
-    triglyceridesMgDl: '110',
-    tshUiuMl: '1.9',
-    freeT4NgDl: '1.3',
-    totalTestosteroneNgDl: '590',
-    morningCortisolUgDl: '13.0',
-    vitaminDNgMl: '36',
-    vitaminB12PgMl: '490',
-    ferritinNgMl: '120',
-    hsCrpMgL: '0.7',
-    creatinineMgDl: '1.02',
-    astU_L: '23',
-    altU_L: '25',
-  });
-  const [examSavedMsg, setExamSavedMsg] = useState<string>('');
+  const [isSelectedLocalDownloaded, setIsSelectedLocalDownloaded] =
+    useState<boolean>(false);
 
   // Estados do Chat Interativo com o Coach
   const [chatQuestion, setChatQuestion] = useState<string>('');
@@ -170,39 +99,28 @@ export const AiCoachHubView: React.FC<Props> = ({
     {
       id: 'welcome-coach',
       role: 'assistant',
-      text: 'Olá! Eu sou o seu Coach Biomédico IA. Analiso sua balança Wellmix, seu Avatar corporal, seus dados do Samsung Health e seus Exames de Sangue para montar seu treino, dieta e rotina. Gere o diagnóstico acima ou me faça qualquer pergunta!',
+      text: 'Olá! Eu sou o seu Coach Biomédico IA. Cruzo os dados da sua balança Wellmix, seu Avatar corporal, Samsung Health e Exames de Sangue para prescrever seu treino, dieta e rotina. Atualize o plano acima ou tire suas dúvidas aqui!',
       timestamp: 'Agora',
       providerBadge: 'BioScale Coach',
     },
   ]);
 
-  const refreshDownloadedModels = async () => {
-    const statusMap = await getAllModelsDownloadStatus(
-      profile.customLocalModelUrl
-    );
-    setDownloadedMap(statusMap);
-  };
+  const selectedLocalSpec = getModelSpecById(
+    profile.selectedLocalModelId,
+    profile.customLocalModelUrl
+  );
 
   useEffect(() => {
-    refreshDownloadedModels();
-  }, [profile.customLocalModelUrl]);
-
-  useEffect(() => {
-    if (labExams.length > 0) {
-      const latestEx = labExams[labExams.length - 1];
-      const nextMap: Record<string, string> = {};
-      for (const g of LAB_BIOMARKERS_GUIDE) {
-        const val = latestEx[g.key];
-        if (typeof val === 'number' && !isNaN(val)) {
-          nextMap[g.key] = String(val);
-        }
+    let active = true;
+    checkModelDownloaded(selectedLocalSpec).then((st) => {
+      if (active) {
+        setIsSelectedLocalDownloaded(st.isDownloaded);
       }
-      setExamInputs((prev) => ({ ...prev, ...nextMap }));
-      if (latestEx.customNotes) {
-        setExamNotes(latestEx.customNotes);
-      }
-    }
-  }, [labExams.length]);
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedLocalSpec.id, selectedLocalSpec.downloadUrl]);
 
   const latestScale = history.length > 0 ? history[history.length - 1] : null;
   const latestTape =
@@ -222,113 +140,6 @@ export const AiCoachHubView: React.FC<Props> = ({
       latestTape,
       latestExam
     );
-
-  const selectedLocalSpec = getModelSpecById(
-    profile.selectedLocalModelId,
-    profile.customLocalModelUrl
-  );
-  const isSelectedLocalDownloaded = Boolean(
-    downloadedMap[selectedLocalSpec.id]?.isDownloaded
-  );
-  const ramInfo = isLocalGemmaLoadedInRam();
-
-  const handleStartModelDownload = async (spec: LocalGemmaModelSpec) => {
-    if (downloadingModelId) return;
-    setDownloadingModelId(spec.id);
-    setModelStatusMsg(`Baixando ${spec.name} direto para o celular...`);
-    setDownloadProgress({
-      progressPercent: 1,
-      downloadedMb: 0,
-      totalMb: spec.sizeMb,
-    });
-
-    try {
-      await downloadLocalGemmaModel(spec, (prog) => {
-        setDownloadProgress(prog);
-      });
-      await refreshDownloadedModels();
-      onUpdateProfile({
-        ...profile,
-        aiProvider: 'gemma_local',
-        selectedLocalModelId: spec.id,
-      });
-      setModelStatusMsg(
-        `✅ ${spec.name} baixado com sucesso e ativado como motor do Coach!`
-      );
-    } catch (e: any) {
-      setModelStatusMsg(
-        `⚠️ ${e?.message || 'Não foi possível concluir o download do modelo.'}`
-      );
-    } finally {
-      setDownloadingModelId(null);
-    }
-  };
-
-  const handleCancelDownload = async () => {
-    await cancelActiveModelDownload();
-    setDownloadingModelId(null);
-    setModelStatusMsg('Download cancelado pelo usuário.');
-  };
-
-  const handleDeleteModel = async (spec: LocalGemmaModelSpec) => {
-    const doRemove = async () => {
-      await deleteDownloadedGemmaModel(spec);
-      await refreshDownloadedModels();
-      setModelStatusMsg(`Modelo ${spec.name} removido da memória do aparelho.`);
-    };
-
-    if (Platform.OS === 'web') {
-      await doRemove();
-      return;
-    }
-
-    Alert.alert(
-      'Remover Modelo Local',
-      `Deseja apagar o arquivo ${spec.filename} (${spec.sizeMb} MB) do armazenamento do celular?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Apagar Arquivo', style: 'destructive', onPress: doRemove },
-      ]
-    );
-  };
-
-  const handleSaveNewExam = async () => {
-    const numOrUndef = (k: BiomarkerFieldKey): number | undefined => {
-      const raw = examInputs[k];
-      if (!raw || raw.trim() === '') return undefined;
-      const n = parseFloat(raw.replace(',', '.'));
-      return isNaN(n) || n <= 0 ? undefined : n;
-    };
-
-    await onSaveLabExam({
-      label: examLabel.trim() || 'Check-up Laboratorial',
-      fastingGlucoseMgDl: numOrUndef('fastingGlucoseMgDl'),
-      hba1cPercent: numOrUndef('hba1cPercent'),
-      fastingInsulinUiuMl: numOrUndef('fastingInsulinUiuMl'),
-      totalCholesterolMgDl: numOrUndef('totalCholesterolMgDl'),
-      hdlMgDl: numOrUndef('hdlMgDl'),
-      ldlMgDl: numOrUndef('ldlMgDl'),
-      triglyceridesMgDl: numOrUndef('triglyceridesMgDl'),
-      tshUiuMl: numOrUndef('tshUiuMl'),
-      freeT4NgDl: numOrUndef('freeT4NgDl'),
-      totalTestosteroneNgDl: numOrUndef('totalTestosteroneNgDl'),
-      morningCortisolUgDl: numOrUndef('morningCortisolUgDl'),
-      vitaminDNgMl: numOrUndef('vitaminDNgMl'),
-      vitaminB12PgMl: numOrUndef('vitaminB12PgMl'),
-      ferritinNgMl: numOrUndef('ferritinNgMl'),
-      hsCrpMgL: numOrUndef('hsCrpMgL'),
-      creatinineMgDl: numOrUndef('creatinineMgDl'),
-      astU_L: numOrUndef('astU_L'),
-      altU_L: numOrUndef('altU_L'),
-      customNotes: examNotes.trim(),
-    });
-
-    setShowNewExamForm(false);
-    setExamSavedMsg(
-      'Exames salvos! Toque em "Atualizar Plano Completo do Coach" para recalcular sua dieta e treino com os novos exames.'
-    );
-    setTimeout(() => setExamSavedMsg(''), 5000);
-  };
 
   const handleAskCoach = async (customQ?: string) => {
     const q = (customQ || chatQuestion).trim();
@@ -376,13 +187,13 @@ export const AiCoachHubView: React.FC<Props> = ({
   const activeModelDisplayBadge =
     profile.aiProvider === 'gemma_local'
       ? `${selectedLocalSpec.name} ${
-          isSelectedLocalDownloaded ? '(Baixado ✅)' : '(Não baixado)'
+          isSelectedLocalDownloaded ? '(On-Device)' : '(Configurar em ⚙️)'
         }`
       : coachPlan?.providerUsed || profile.aiProvider.toUpperCase();
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* 1. AVATAR DO COACH + SCORE BIOMÉTRICO + SELETOR DE PERSONA */}
+      {/* 1. AVATAR DO COACH + SCORE BIOMÉTRICO + PERSONA */}
       <CoachAvatarSvg
         persona={profile.coachPersona || 'atlas'}
         onSelectPersona={(nextPersona: CoachPersona) =>
@@ -397,28 +208,30 @@ export const AiCoachHubView: React.FC<Props> = ({
         alertsCount={latestExamEval?.alerts.length || 0}
         statusLine={
           coachPlan?.summaryHeadline ||
-          'Cruza Balança Wellmix + Avatar + Samsung Health + Exames de Sangue'
+          'Balança BIA + Avatar + Samsung Health + Exames Clínicos'
         }
       />
 
-      {/* 2. BARRA DE OBJETIVO DE TREINO/DIETA E AÇÃO PRINCIPAL */}
+      {/* 2. BARRA COMPACTA DE OBJETIVO, FREQUÊNCIA E MOTOR IA */}
       <View style={styles.controlCard}>
         <View style={styles.rowBetween}>
-          <Text style={styles.smallSectionLabel}>
-            FOCO DO COACH (TREINO & DIETA):
-          </Text>
-          <TouchableOpacity style={styles.settingsLinkBtn} onPress={onOpenSettings}>
-            <Settings size={13} color="#38BDF8" />
-            <Text style={styles.settingsLinkText}>
-              Chaves API / Provedor ({profile.aiProvider.toUpperCase()})
-            </Text>
-          </TouchableOpacity>
+          <Text style={styles.smallSectionLabel}>DIRETRIZ DO PROTOCOLO</Text>
+          {onOpenSettings && (
+            <TouchableOpacity
+              style={styles.engineSettingsBtn}
+              onPress={onOpenSettings}
+            >
+              <Settings size={13} color={obsidianTheme.accent} />
+              <Text style={styles.engineSettingsBtnText}>⚙️ Motor IA</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
+        {/* Seletor Compacto de Objetivo */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={{ marginVertical: 8 }}
+          style={styles.goalScroll}
         >
           {TRAINING_GOALS.map((g) => {
             const active = (profile.trainingGoal || 'recomposition') === g.key;
@@ -428,18 +241,12 @@ export const AiCoachHubView: React.FC<Props> = ({
                 onPress={() =>
                   onUpdateProfile({ ...profile, trainingGoal: g.key })
                 }
-                style={[
-                  styles.goalChip,
-                  active && {
-                    backgroundColor: '#38BDF825',
-                    borderColor: '#38BDF8',
-                  },
-                ]}
+                style={[styles.goalChip, active && styles.goalChipActive]}
               >
                 <Text
                   style={[
                     styles.goalChipText,
-                    active && { color: '#38BDF8', fontWeight: '800' },
+                    active && styles.goalChipTextActive,
                   ]}
                 >
                   {g.label}
@@ -449,9 +256,9 @@ export const AiCoachHubView: React.FC<Props> = ({
           })}
         </ScrollView>
 
-        {/* Frequência Semanal de Treinos */}
-        <View style={[styles.rowBetween, { marginBottom: 10 }]}>
-          <Text style={styles.freqLabel}>Treinos por semana:</Text>
+        {/* Frequência Semanal */}
+        <View style={styles.freqBarRow}>
+          <Text style={styles.freqLabel}>Frequência semanal:</Text>
           <View style={styles.freqPillsRow}>
             {[3, 4, 5, 6].map((n) => {
               const isSel = (profile.weeklyWorkoutsTarget || 4) === n;
@@ -461,18 +268,12 @@ export const AiCoachHubView: React.FC<Props> = ({
                   onPress={() =>
                     onUpdateProfile({ ...profile, weeklyWorkoutsTarget: n })
                   }
-                  style={[
-                    styles.freqPill,
-                    isSel && {
-                      backgroundColor: '#10B98125',
-                      borderColor: '#10B981',
-                    },
-                  ]}
+                  style={[styles.freqPill, isSel && styles.freqPillActive]}
                 >
                   <Text
                     style={[
                       styles.freqPillText,
-                      isSel && { color: '#10B981', fontWeight: '800' },
+                      isSel && styles.freqPillTextActive,
                     ]}
                   >
                     {n}x/sem
@@ -483,6 +284,7 @@ export const AiCoachHubView: React.FC<Props> = ({
           </View>
         </View>
 
+        {/* Botão Principal Emerald */}
         <TouchableOpacity
           style={styles.generateBtn}
           onPress={onGenerateAnalysis}
@@ -490,622 +292,163 @@ export const AiCoachHubView: React.FC<Props> = ({
         >
           {loadingAi ? (
             <>
-              <ActivityIndicator size="small" color="#0F172A" />
+              <ActivityIndicator size="small" color={obsidianTheme.bg} />
               <Text style={styles.generateBtnText}>
-                Analisando Balança, Avatar, Sono e Exames...
+                Processando Balança, Avatar, Sono e Exames...
               </Text>
             </>
           ) : (
             <>
-              <Sparkles size={18} color="#0F172A" />
+              <Sparkles size={16} color={obsidianTheme.bg} />
               <Text style={styles.generateBtnText}>
-                Atualizar Plano Completo do Coach (Treino, Dieta, Hábitos & Exames)
+                Atualizar Plano com IA
               </Text>
             </>
           )}
         </TouchableOpacity>
 
+        {/* Live Token Streaming Preview (Gemma Local On-Device) */}
         {loadingAi && streamingPreview !== '' && (
           <View style={styles.streamPreviewBox}>
             <Text style={styles.streamPreviewTitle}>
-              ⚡ Gerando resposta em tempo real (Gemma On-Device):
+              ⚡ Inferência On-Device em Tempo Real:
             </Text>
             <Text style={styles.streamPreviewText}>{streamingPreview}</Text>
           </View>
         )}
       </View>
 
-      {/* 3. NAVEGAÇÃO DE SUB-ABAS DO COACH */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.subTabsScroll}
-      >
+      {/* 3. CONTROLE SEGMENTADO DE 4 ABAS LIMPAS */}
+      <View style={styles.segmentedControl}>
         {(
           [
-            {
-              key: 'overview',
-              label: 'Resumo',
-              icon: <Sparkles size={14} color="#38BDF8" />,
-              color: '#38BDF8',
-            },
-            {
-              key: 'training',
-              label: 'Treinos',
-              icon: <Dumbbell size={14} color="#10B981" />,
-              color: '#10B981',
-            },
-            {
-              key: 'nutrition',
-              label: 'Alimentação',
-              icon: <Apple size={14} color="#F59E0B" />,
-              color: '#F59E0B',
-            },
-            {
-              key: 'habits',
-              label: 'Hábitos & Sono',
-              icon: <Moon size={14} color="#A855F7" />,
-              color: '#A855F7',
-            },
-            {
-              key: 'exams',
-              label: `Exames (${labExams.length})`,
-              icon: <FlaskConical size={14} color="#F43F5E" />,
-              color: '#F43F5E',
-            },
-            {
-              key: 'local_models',
-              label: 'Baixar IA Local (Gemma)',
-              icon: <Cpu size={14} color="#F59E0B" />,
-              color: '#F59E0B',
-            },
-            {
-              key: 'chat',
-              label: 'Chat Coach',
-              icon: <MessageSquare size={14} color="#38BDF8" />,
-              color: '#38BDF8',
-            },
-          ] as Array<{
-            key: CoachSubTab;
-            label: string;
-            icon: React.ReactNode;
-            color: string;
-          }>
+            { key: 'overview', label: 'Plano Geral' },
+            { key: 'training', label: 'Treino' },
+            { key: 'nutrition', label: 'Dieta & Hábitos' },
+            { key: 'chat', label: 'Chat IA' },
+          ] as Array<{ key: CoachSubTab; label: string }>
         ).map((tab) => {
           const active = subTab === tab.key;
           return (
             <TouchableOpacity
               key={tab.key}
               onPress={() => setSubTab(tab.key)}
-              style={[
-                styles.subTabBtn,
-                active && {
-                  backgroundColor: tab.color + '25',
-                  borderColor: tab.color,
-                },
-              ]}
+              style={[styles.segmentTab, active && styles.segmentTabActive]}
             >
-              {tab.icon}
               <Text
                 style={[
-                  styles.subTabText,
-                  active && { color: tab.color, fontWeight: '800' },
+                  styles.segmentTabText,
+                  active && styles.segmentTabTextActive,
                 ]}
+                numberOfLines={1}
               >
                 {tab.label}
               </Text>
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
 
-      {/* 4. CONTEÚDO DA SUB-ABA SELECIONADA */}
+      {/* 4. CONTEÚDO DA ABA SELECIONADA */}
       {subTab === 'overview' && (
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionCardTitle}>
-            📊 Diagnóstico Integrado (Balança + Avatar + Exames)
-          </Text>
-          <Text style={styles.planBodyText}>
-            {coachPlan
-              ? coachPlan.overviewAnalysis
-              : 'Toque no botão azul acima para gerar seu plano completo cruzando bioimpedância, medidas do Avatar, Samsung Health e exames de sangue!'}
-          </Text>
-
-          {coachPlan && (
-            <View style={styles.quickJumpRow}>
-              <TouchableOpacity
-                style={styles.quickJumpBtn}
-                onPress={() => setSubTab('training')}
-              >
-                <Dumbbell size={14} color="#10B981" />
-                <Text style={styles.quickJumpText}>Ver Treino</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickJumpBtn}
-                onPress={() => setSubTab('nutrition')}
-              >
-                <Apple size={14} color="#F59E0B" />
-                <Text style={styles.quickJumpText}>Ver Dieta</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickJumpBtn}
-                onPress={() => setSubTab('exams')}
-              >
-                <FlaskConical size={14} color="#F43F5E" />
-                <Text style={styles.quickJumpText}>Ver Exames</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickJumpBtn}
-                onPress={() => setSubTab('local_models')}
-              >
-                <Download size={14} color="#38BDF8" />
-                <Text style={styles.quickJumpText}>Gemma Local</Text>
-              </TouchableOpacity>
+        <View>
+          <View style={styles.sectionCard}>
+            <View style={styles.cardHeaderRow}>
+              <Sparkles size={16} color={obsidianTheme.accent} />
+              <Text style={styles.sectionCardTitle}>
+                Diagnóstico Executivo Integrado
+              </Text>
             </View>
-          )}
+            <Text style={styles.planBodyText}>
+              {coachPlan
+                ? coachPlan.overviewAnalysis
+                : 'Toque em "Atualizar Plano com IA" acima para cruzar sua bioimpedância Wellmix, simetria do Avatar, Samsung Health e exames laboratoriais.'}
+            </Text>
+          </View>
+
+          <View style={styles.sectionCard}>
+            <View style={styles.cardHeaderRow}>
+              <FlaskConical size={16} color={obsidianTheme.statusNormal} />
+              <Text style={styles.sectionCardTitle}>
+                Destaques Clínicos & Exames Laboratoriais
+              </Text>
+            </View>
+            <Text style={styles.planBodyText}>
+              {coachPlan
+                ? coachPlan.examsAnalysis
+                : latestExamEval
+                ? `Último check-up (${latestExam?.label}): ${latestExamEval.optimalCount} marcadores em faixa ótima e ${latestExamEval.alerts.length} ponto(s) de atenção. Gere o plano para ver os ajustes clínicos.`
+                : 'Consulte ou cadastre novos biomarcadores na aba Saúde & Exames para calibrar sua conduta clínica.'}
+            </Text>
+          </View>
         </View>
       )}
 
       {subTab === 'training' && (
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionCardTitle}>
-            🏋️ Prescrição de Treinos & Simetria Corporal
-          </Text>
+          <View style={styles.cardHeaderRow}>
+            <Dumbbell size={16} color={obsidianTheme.accent} />
+            <Text style={styles.sectionCardTitle}>
+              Periodização de Treino, Simetria & Cardio
+            </Text>
+          </View>
           <Text style={styles.planBodyText}>
             {coachPlan
               ? coachPlan.trainingPlan
-              : 'Toque em "Atualizar Plano Completo do Coach" acima para gerar sua prescrição de treino!'}
+              : 'Toque em "Atualizar Plano com IA" para gerar sua prescrição semanal focada nos pontos de simetria do seu Avatar e protocolo de queima visceral.'}
           </Text>
         </View>
       )}
 
       {subTab === 'nutrition' && (
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionCardTitle}>
-            🥗 Plano Alimentar, Calorias, Macros & Suplementação
-          </Text>
-          <Text style={styles.planBodyText}>
-            {coachPlan
-              ? coachPlan.nutritionPlan
-              : 'Toque em "Atualizar Plano Completo do Coach" acima para calcular suas calorias e macronutrientes!'}
-          </Text>
-        </View>
-      )}
-
-      {subTab === 'habits' && (
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionCardTitle}>
-            🌙 Hábitos Diários, Higiene do Sono & Rotina
-          </Text>
-          <Text style={styles.planBodyText}>
-            {coachPlan
-              ? coachPlan.habitsAndRecoveryPlan
-              : 'Toque em "Atualizar Plano Completo do Coach" acima para ver seu protocolo de sono e hábitos!'}
-          </Text>
-        </View>
-      )}
-
-      {/* SUB-ABA: EXAMES LABORATORIAIS & BIOMARCADORES */}
-      {subTab === 'exams' && (
-        <View style={styles.sectionCard}>
-          <View style={styles.rowBetween}>
-            <View style={{ flex: 1 }}>
+        <View>
+          <View style={styles.sectionCard}>
+            <View style={styles.cardHeaderRow}>
+              <Apple size={16} color={obsidianTheme.accent} />
               <Text style={styles.sectionCardTitle}>
-                🧪 Resultados de Exames Clínicos
-              </Text>
-              <Text style={styles.sectionCardSubtitle}>
-                Cadastre seus exames de sangue para que o Coach ajuste sua alimentação, suplementos e treino com precisão clínica.
+                Prescrição Nutricional, Macros & Suplementação
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.addExamBtn}
-              onPress={() => setShowNewExamForm(!showNewExamForm)}
-            >
-              <Plus size={15} color="#0F172A" />
-              <Text style={styles.addExamBtnText}>
-                {showNewExamForm ? 'Fechar' : 'Novo Exame'}
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.planBodyText}>
+              {coachPlan
+                ? coachPlan.nutritionPlan
+                : 'Toque em "Atualizar Plano com IA" para calcular suas calorias exatas, gramas de proteínas, carboidratos, gorduras e ajustes pelos exames.'}
+            </Text>
           </View>
 
-          {examSavedMsg !== '' && (
-            <View style={styles.successBanner}>
-              <Text style={styles.successBannerText}>{examSavedMsg}</Text>
-            </View>
-          )}
-
-          {/* Formulário para Adicionar / Atualizar Resultados de Exames */}
-          {showNewExamForm && (
-            <View style={styles.examFormBox}>
-              <Text style={styles.examFormHeading}>
-                Registrar / Atualizar Resultados de Exames
-              </Text>
-
-              <Text style={styles.inputLabel}>Nome / Data da Bateria de Exames</Text>
-              <TextInput
-                style={styles.textInput}
-                value={examLabel}
-                onChangeText={setExamLabel}
-                placeholder="Ex: Check-up Laboratorial Outubro"
-                placeholderTextColor="#64748B"
-              />
-
-              {/* Abas de Categoria de Biomarcadores */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginVertical: 10 }}
-              >
-                {BIOMARKER_CATEGORIES.map((cat) => {
-                  const isSel = examCategory === cat.key;
-                  return (
-                    <TouchableOpacity
-                      key={cat.key}
-                      onPress={() => setExamCategory(cat.key)}
-                      style={[
-                        styles.catChip,
-                        isSel && {
-                          backgroundColor: cat.color + '25',
-                          borderColor: cat.color,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.catChipText,
-                          isSel && { color: cat.color, fontWeight: '800' },
-                        ]}
-                      >
-                        {cat.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* Inputs numéricos da categoria selecionada */}
-              <View style={styles.biomarkerInputsGrid}>
-                {LAB_BIOMARKERS_GUIDE.filter(
-                  (g) => g.category === examCategory && g.key !== 'homaIr'
-                ).map((g) => {
-                  const minRef =
-                    profile.sex === 'male' ? g.minIdealMale : g.minIdealFemale;
-                  const maxRef =
-                    profile.sex === 'male' ? g.maxIdealMale : g.maxIdealFemale;
-                  return (
-                    <View key={g.key} style={styles.biomarkerInputCell}>
-                      <Text style={styles.biomarkerInputLabel}>{g.label}</Text>
-                      <Text style={styles.biomarkerRefHint}>
-                        Ideal: {minRef}–{maxRef} {g.unit}
-                      </Text>
-                      <View style={styles.inputWithUnitRow}>
-                        <TextInput
-                          style={styles.biomarkerInput}
-                          keyboardType="numeric"
-                          placeholder={g.placeholder}
-                          placeholderTextColor="#475569"
-                          value={examInputs[g.key] || ''}
-                          onChangeText={(txt) =>
-                            setExamInputs((prev) => ({ ...prev, [g.key]: txt }))
-                          }
-                        />
-                        <Text style={styles.unitTag}>{g.unit}</Text>
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Cálculo automático do HOMA-IR em tempo real */}
-              {examCategory === 'glycemic' && (
-                <View style={styles.homaPreviewBox}>
-                  <Text style={styles.homaPreviewText}>
-                    🧬 Índice HOMA-IR Calculado Automaticamente:{' '}
-                    <Text style={{ color: '#38BDF8', fontWeight: '800' }}>
-                      {calculateHomaIr(
-                        parseFloat(
-                          (examInputs.fastingGlucoseMgDl || '0').replace(',', '.')
-                        ),
-                        parseFloat(
-                          (examInputs.fastingInsulinUiuMl || '0').replace(',', '.')
-                        )
-                      ) ?? '--'}{' '}
-                      (Ideal {'<'} 2.1)
-                    </Text>
-                  </Text>
-                </View>
-              )}
-
-              <Text style={styles.inputLabel}>
-                Outros Exames / Laudo Médico / Restrições Alimentares (Texto Livre)
-              </Text>
-              <TextInput
-                style={[styles.textInput, { minHeight: 66, textAlignVertical: 'top' }]}
-                multiline
-                value={examNotes}
-                onChangeText={setExamNotes}
-                placeholder="Ex: Ácido úrico 5.8 mg/dL, intolerância a lactose, ergoespirometria VO2max 44 ml/kg/min..."
-                placeholderTextColor="#64748B"
-              />
-
-              <TouchableOpacity
-                style={styles.saveExamSubmitBtn}
-                onPress={handleSaveNewExam}
-              >
-                <CheckCircle2 size={17} color="#0F172A" />
-                <Text style={styles.saveExamSubmitText}>
-                  Salvar Exames e Integrar ao Coach IA
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Painel de Biomarcadores do Último Exame */}
-          {latestExam && latestExamEval ? (
-            <View style={{ marginTop: 10 }}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.examCurrentTitle}>
-                  📋 {latestExam.label} (
-                  {new Date(latestExam.timestamp).toLocaleDateString('pt-BR')})
-                </Text>
-                <TouchableOpacity
-                  style={styles.deleteExamBtn}
-                  onPress={() => onDeleteLabExam(latestExam.id)}
-                >
-                  <Trash2 size={13} color="#FCA5A5" />
-                  <Text style={styles.deleteExamBtnText}>Excluir</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.evalGrid}>
-                {latestExamEval.evaluations.map((ev) => (
-                  <View
-                    key={ev.guide.key}
-                    style={[
-                      styles.evalBadgeCard,
-                      { borderColor: ev.color + '70' },
-                    ]}
-                  >
-                    <View style={styles.rowBetween}>
-                      <Text style={styles.evalShortLabel}>
-                        {ev.guide.shortLabel}
-                      </Text>
-                      <Text style={[styles.evalStatusTag, { color: ev.color }]}>
-                        {ev.statusLabel}
-                      </Text>
-                    </View>
-                    <Text style={styles.evalValueText}>
-                      {ev.value}{' '}
-                      <Text style={styles.evalUnitText}>{ev.guide.unit}</Text>
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              {coachPlan && (
-                <View style={styles.examCoachInterpretationBox}>
-                  <Text style={styles.planBodyText}>{coachPlan.examsAnalysis}</Text>
-                </View>
-              )}
-            </View>
-          ) : (
-            <Text style={styles.emptyText}>
-              Nenhum exame cadastrado. Toque em "Novo Exame" acima para adicionar seus resultados!
-            </Text>
-          )}
-        </View>
-      )}
-
-      {/* SUB-ABA: BAIXAR E RODAR MODELO LOCAL GEMMA (ON-DEVICE GGUF) */}
-      {subTab === 'local_models' && (
-        <View style={styles.sectionCard}>
-          <View style={styles.rowBetween}>
-            <View style={{ flex: 1 }}>
+          <View style={styles.sectionCard}>
+            <View style={styles.cardHeaderRow}>
+              <Moon size={16} color={obsidianTheme.statusNormal} />
               <Text style={styles.sectionCardTitle}>
-                ⚡ Modelos Locais Google Gemma (On-Device GGUF)
-              </Text>
-              <Text style={styles.sectionCardSubtitle}>
-                Baixe um modelo da família Google Gemma diretamente no seu celular para rodar o Coach IA localmente (via motor nativo C++ llama.rn), sem depender de chaves de API ou nuvem!
+                Protocolo Circadiano, Sono & Recuperação
               </Text>
             </View>
-          </View>
-
-          {modelStatusMsg !== '' && (
-            <View style={styles.modelStatusBanner}>
-              <Text style={styles.modelStatusBannerText}>{modelStatusMsg}</Text>
-            </View>
-          )}
-
-          {/* Progresso de Download em Tempo Real */}
-          {downloadingModelId && (
-            <View style={styles.downloadProgressBox}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.downloadProgressTitle}>
-                  Baixando Modelo GGUF ({downloadProgress.progressPercent}%)
-                </Text>
-                <TouchableOpacity
-                  style={styles.cancelDownloadBtn}
-                  onPress={handleCancelDownload}
-                >
-                  <XCircle size={14} color="#FCA5A5" />
-                  <Text style={styles.cancelDownloadText}>Cancelar</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.progressBarBg}>
-                <View
-                  style={[
-                    styles.progressBarFill,
-                    { width: `${downloadProgress.progressPercent}%` },
-                  ]}
-                />
-              </View>
-              <Text style={styles.downloadBytesText}>
-                {downloadProgress.downloadedMb} MB de {downloadProgress.totalMb} MB
-              </Text>
-            </View>
-          )}
-
-          {/* Lista de Modelos Gemma Disponíveis para Download */}
-          {LOCAL_GEMMA_MODELS.map((m) => {
-            const st = downloadedMap[m.id];
-            const isDownloaded = Boolean(st?.isDownloaded);
-            const isSelected =
-              profile.aiProvider === 'gemma_local' &&
-              (profile.selectedLocalModelId || 'gemma-3-1b-q4') === m.id;
-            const isDownloadingThis = downloadingModelId === m.id;
-
-            return (
-              <View
-                key={m.id}
-                style={[
-                  styles.modelCard,
-                  isSelected && {
-                    borderColor: '#F59E0B',
-                    backgroundColor: '#F59E0B10',
-                  },
-                ]}
-              >
-                <View style={styles.rowBetween}>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.rowWrap}>
-                      <Text style={styles.modelTitle}>{m.name}</Text>
-                      {m.recommended && (
-                        <View style={styles.recBadge}>
-                          <Text style={styles.recBadgeText}>RECOMENDADO</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.modelMetaText}>
-                      {m.family} • {m.quantization} • ~{m.sizeMb} MB • RAM mín:{' '}
-                      {m.ramRequiredGb} GB
-                    </Text>
-                  </View>
-                </View>
-
-                <Text style={styles.modelDescText}>{m.description}</Text>
-
-                <View style={styles.modelActionsRow}>
-                  {isDownloaded ? (
-                    <>
-                      <TouchableOpacity
-                        style={[
-                          styles.activateModelBtn,
-                          isSelected && styles.activateModelBtnActive,
-                        ]}
-                        onPress={() =>
-                          onUpdateProfile({
-                            ...profile,
-                            aiProvider: 'gemma_local',
-                            selectedLocalModelId: m.id,
-                          })
-                        }
-                      >
-                        <CheckCircle2
-                          size={15}
-                          color={isSelected ? '#0F172A' : '#10B981'}
-                        />
-                        <Text
-                          style={[
-                            styles.activateModelBtnText,
-                            isSelected && { color: '#0F172A' },
-                          ]}
-                        >
-                          {isSelected
-                            ? ramInfo.loaded
-                              ? 'Ativo na RAM do Coach'
-                              : 'Selecionado no Coach ✅'
-                            : 'Usar este Modelo no Coach'}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.deleteModelBtn}
-                        onPress={() => handleDeleteModel(m)}
-                      >
-                        <Trash2 size={14} color="#FCA5A5" />
-                      </TouchableOpacity>
-                    </>
-                  ) : (
-                    <TouchableOpacity
-                      style={[
-                        styles.downloadModelBtn,
-                        Boolean(downloadingModelId) && { opacity: 0.6 },
-                      ]}
-                      disabled={Boolean(downloadingModelId)}
-                      onPress={() => handleStartModelDownload(m)}
-                    >
-                      {isDownloadingThis ? (
-                        <ActivityIndicator size="small" color="#0F172A" />
-                      ) : (
-                        <Download size={15} color="#0F172A" />
-                      )}
-                      <Text style={styles.downloadModelBtnText}>
-                        {isDownloadingThis
-                          ? `Baixando (${downloadProgress.progressPercent}%)...`
-                          : `Baixar no Aparelho (${m.sizeMb} MB)`}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            );
-          })}
-
-          {/* Opção de URL GGUF Customizada (ex: outro modelo Gemma do HuggingFace) */}
-          <View style={styles.customUrlCard}>
-            <Text style={styles.modelTitle}>
-              🔗 Baixar Outro Modelo GGUF via Link (HuggingFace)
+            <Text style={styles.planBodyText}>
+              {coachPlan
+                ? coachPlan.habitsAndRecoveryPlan
+                : 'Toque em "Atualizar Plano com IA" para receber sua rotina circadiana, meta de passos e manejo de cortisol.'}
             </Text>
-            <Text style={styles.modelDescText}>
-              Cole qualquer link direto `.gguf` (ex: Gemma 2B, Qwen 2.5, Phi-3, Llama 3) para baixar e rodar localmente no Coach:
-            </Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="https://huggingface.co/.../resolve/main/modelo.gguf"
-              placeholderTextColor="#475569"
-              value={profile.customLocalModelUrl || ''}
-              onChangeText={(v) =>
-                onUpdateProfile({ ...profile, customLocalModelUrl: v })
-              }
-            />
-            {profile.customLocalModelUrl &&
-              profile.customLocalModelUrl.trim().length > 12 && (
-                <TouchableOpacity
-                  style={[styles.downloadModelBtn, { marginTop: 8 }]}
-                  disabled={Boolean(downloadingModelId)}
-                  onPress={() => {
-                    const customSpec = getModelSpecById(
-                      'custom_gguf',
-                      profile.customLocalModelUrl
-                    );
-                    handleStartModelDownload(customSpec);
-                  }}
-                >
-                  <Download size={15} color="#0F172A" />
-                  <Text style={styles.downloadModelBtnText}>
-                    Baixar e Ativar GGUF Customizado
-                  </Text>
-                </TouchableOpacity>
-              )}
           </View>
         </View>
       )}
 
-      {/* SUB-ABA: CHAT INTERATIVO COM O COACH */}
       {subTab === 'chat' && (
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionCardTitle}>
-            💬 Converse com seu Coach Biomédico
-          </Text>
+          <View style={styles.cardHeaderRow}>
+            <MessageSquare size={16} color={obsidianTheme.accent} />
+            <Text style={styles.sectionCardTitle}>
+              Chat Interativo com o Coach Biomédico
+            </Text>
+          </View>
           <Text style={styles.sectionCardSubtitle}>
-            Tire dúvidas específicas sobre substituições na dieta, divisão de exercícios ou resultados dos seus exames.
+            Pergunte sobre substituições de refeições, ajustes de treino ou interpretação de marcadores.
           </Text>
 
-          {/* Sugestões rápidas de perguntas */}
+          {/* Pílulas de Perguntas Rápidas */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            style={{ marginVertical: 8 }}
+            style={styles.quickPromptsScroll}
           >
             {QUICK_QUESTIONS.map((qq, idx) => (
               <TouchableOpacity
@@ -1118,7 +461,7 @@ export const AiCoachHubView: React.FC<Props> = ({
             ))}
           </ScrollView>
 
-          {/* Histórico de Mensagens do Chat */}
+          {/* Histórico de Mensagens */}
           <View style={styles.chatHistoryBox}>
             {chatMessages.map((msg) => {
               const isUser = msg.role === 'user';
@@ -1132,13 +475,13 @@ export const AiCoachHubView: React.FC<Props> = ({
                 >
                   {!isUser && msg.providerBadge && (
                     <Text style={styles.chatProviderBadge}>
-                      🤖 {msg.providerBadge}
+                      ⚡ {msg.providerBadge}
                     </Text>
                   )}
                   <Text
                     style={[
                       styles.chatBubbleText,
-                      isUser && { color: '#0F172A', fontWeight: '700' },
+                      isUser && { color: obsidianTheme.bg, fontWeight: '700' },
                     ]}
                   >
                     {msg.text}
@@ -1148,20 +491,20 @@ export const AiCoachHubView: React.FC<Props> = ({
             })}
             {chatLoading && (
               <View style={[styles.chatBubble, styles.chatBubbleCoach]}>
-                <ActivityIndicator size="small" color="#38BDF8" />
+                <ActivityIndicator size="small" color={obsidianTheme.accent} />
                 <Text style={styles.chatProviderBadge}>
-                  Coach elaborando resposta com seus dados...
+                  Elaborando resposta clínica...
                 </Text>
               </View>
             )}
           </View>
 
-          {/* Barra de envio de pergunta */}
+          {/* Input de Pergunta */}
           <View style={styles.chatInputRow}>
             <TextInput
               style={styles.chatInput}
               placeholder="Pergunte sobre treino, dieta ou exames..."
-              placeholderTextColor="#64748B"
+              placeholderTextColor={obsidianTheme.textMuted}
               value={chatQuestion}
               onChangeText={setChatQuestion}
             />
@@ -1170,7 +513,7 @@ export const AiCoachHubView: React.FC<Props> = ({
               onPress={() => handleAskCoach()}
               disabled={chatLoading}
             >
-              <Send size={17} color="#0F172A" />
+              <Send size={16} color={obsidianTheme.bg} />
             </TouchableOpacity>
           </View>
         </View>
@@ -1182,14 +525,14 @@ export const AiCoachHubView: React.FC<Props> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   controlCard: {
-    backgroundColor: '#111827',
-    borderRadius: 18,
+    backgroundColor: obsidianTheme.surface,
+    borderRadius: obsidianTheme.radiusLg,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: obsidianTheme.border,
     marginBottom: 12,
   },
   rowBetween: {
@@ -1197,48 +540,61 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  rowWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
   smallSectionLabel: {
-    color: '#94A3B8',
+    color: obsidianTheme.textMuted,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.7,
   },
-  settingsLinkBtn: {
+  engineSettingsBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 9,
+    backgroundColor: obsidianTheme.bg,
+    paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: obsidianTheme.border,
   },
-  settingsLinkText: {
-    color: '#38BDF8',
-    fontSize: 10,
-    fontWeight: '700',
+  engineSettingsBtnText: {
+    color: obsidianTheme.textPrimary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  goalScroll: {
+    marginVertical: 10,
   },
   goalChip: {
-    backgroundColor: '#0F172A',
+    backgroundColor: obsidianTheme.bg,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 11,
+    borderRadius: obsidianTheme.radiusSm,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: obsidianTheme.border,
     marginRight: 8,
   },
+  goalChipActive: {
+    backgroundColor: obsidianTheme.accentSoft,
+    borderColor: obsidianTheme.accentBorder,
+  },
   goalChipText: {
-    color: '#CBD5E1',
+    color: obsidianTheme.textSecondary,
     fontSize: 12,
     fontWeight: '600',
   },
+  goalChipTextActive: {
+    color: obsidianTheme.accent,
+    fontWeight: '700',
+  },
+  freqBarRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   freqLabel: {
-    color: '#94A3B8',
+    color: obsidianTheme.textSecondary,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1247,524 +603,167 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   freqPill: {
-    backgroundColor: '#0F172A',
+    backgroundColor: obsidianTheme.bg,
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: obsidianTheme.border,
+  },
+  freqPillActive: {
+    backgroundColor: obsidianTheme.accentSoft,
+    borderColor: obsidianTheme.accentBorder,
   },
   freqPillText: {
-    color: '#94A3B8',
+    color: obsidianTheme.textSecondary,
     fontSize: 11,
     fontWeight: '600',
+  },
+  freqPillTextActive: {
+    color: obsidianTheme.accent,
+    fontWeight: '700',
   },
   generateBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#38BDF8',
+    backgroundColor: obsidianTheme.accent,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 13,
+    borderRadius: obsidianTheme.radiusMd,
     gap: 8,
   },
   generateBtnText: {
-    color: '#0F172A',
+    color: obsidianTheme.bg,
     fontWeight: '800',
-    fontSize: 13,
-    textAlign: 'center',
-    flexShrink: 1,
+    fontSize: 13.5,
   },
   streamPreviewBox: {
     marginTop: 10,
-    backgroundColor: '#0F172A',
-    padding: 10,
-    borderRadius: 12,
+    backgroundColor: obsidianTheme.bg,
+    padding: 11,
+    borderRadius: obsidianTheme.radiusSm,
     borderWidth: 1,
-    borderColor: '#F59E0B60',
+    borderColor: obsidianTheme.accentBorder,
   },
   streamPreviewTitle: {
-    color: '#F59E0B',
+    color: obsidianTheme.accent,
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     marginBottom: 4,
   },
   streamPreviewText: {
-    color: '#E2E8F0',
+    color: obsidianTheme.textPrimary,
     fontSize: 12,
     lineHeight: 18,
   },
-  subTabsScroll: {
-    marginBottom: 12,
-  },
-  subTabBtn: {
+  segmentedControl: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#111827',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 12,
+    backgroundColor: obsidianTheme.surface,
+    padding: 4,
+    borderRadius: obsidianTheme.radiusMd,
     borderWidth: 1,
-    borderColor: '#1E293B',
-    marginRight: 8,
+    borderColor: obsidianTheme.border,
+    marginBottom: 12,
+    gap: 4,
   },
-  subTabText: {
-    color: '#94A3B8',
-    fontSize: 12,
+  segmentTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 4,
+    borderRadius: obsidianTheme.radiusSm,
+  },
+  segmentTabActive: {
+    backgroundColor: obsidianTheme.surfaceElevated,
+    borderWidth: 1,
+    borderColor: obsidianTheme.accentBorder,
+  },
+  segmentTabText: {
+    color: obsidianTheme.textSecondary,
+    fontSize: 11.5,
     fontWeight: '600',
   },
+  segmentTabTextActive: {
+    color: obsidianTheme.accent,
+    fontWeight: '700',
+  },
   sectionCard: {
-    backgroundColor: '#111827',
-    borderRadius: 20,
+    backgroundColor: obsidianTheme.surface,
+    borderRadius: obsidianTheme.radiusLg,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1E293B',
-    marginBottom: 26,
+    borderColor: obsidianTheme.border,
+    marginBottom: 14,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
   },
   sectionCardTitle: {
-    color: '#F8FAFC',
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: 6,
+    color: obsidianTheme.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    flex: 1,
   },
   sectionCardSubtitle: {
-    color: '#94A3B8',
+    color: obsidianTheme.textSecondary,
     fontSize: 12,
     lineHeight: 17,
     marginBottom: 10,
   },
   planBodyText: {
-    color: '#E2E8F0',
+    color: obsidianTheme.textPrimary,
     fontSize: 13.5,
     lineHeight: 21,
   },
-  quickJumpRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#1E293B',
-  },
-  quickJumpBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  quickJumpText: {
-    color: '#CBD5E1',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  addExamBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#10B981',
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  addExamBtnText: {
-    color: '#0F172A',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  successBanner: {
-    backgroundColor: '#064E3B',
-    borderColor: '#10B981',
-    borderWidth: 1,
-    padding: 10,
-    borderRadius: 10,
-    marginVertical: 8,
-  },
-  successBannerText: {
-    color: '#34D399',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  examFormBox: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#334155',
-    marginVertical: 10,
-  },
-  examFormHeading: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  inputLabel: {
-    color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  textInput: {
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#1E293B',
-    borderRadius: 10,
-    color: '#F8FAFC',
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    fontSize: 13,
-  },
-  catChip: {
-    backgroundColor: '#111827',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    marginRight: 8,
-  },
-  catChipText: {
-    color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  biomarkerInputsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  biomarkerInputCell: {
-    width: '48%',
-    backgroundColor: '#111827',
-    padding: 9,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#1E293B',
-  },
-  biomarkerInputLabel: {
-    color: '#E2E8F0',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  biomarkerRefHint: {
-    color: '#64748B',
-    fontSize: 9.5,
-    marginTop: 1,
-    marginBottom: 5,
-  },
-  inputWithUnitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  biomarkerInput: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-    color: '#F8FAFC',
-    fontWeight: '800',
-    fontSize: 13,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  unitTag: {
-    color: '#94A3B8',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  homaPreviewBox: {
-    backgroundColor: '#111827',
-    padding: 9,
-    borderRadius: 10,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#38BDF840',
-  },
-  homaPreviewText: {
-    color: '#CBD5E1',
-    fontSize: 11.5,
-  },
-  saveExamSubmitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#10B981',
-    paddingVertical: 11,
-    borderRadius: 12,
-    marginTop: 12,
-  },
-  saveExamSubmitText: {
-    color: '#0F172A',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  examCurrentTitle: {
-    color: '#38BDF8',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  deleteExamBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#7F1D1D55',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  deleteExamBtnText: {
-    color: '#FCA5A5',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  evalGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginTop: 10,
-  },
-  evalBadgeCard: {
-    width: '48%',
-    backgroundColor: '#0F172A',
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  evalShortLabel: {
-    color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  evalStatusTag: {
-    fontSize: 9.5,
-    fontWeight: '800',
-  },
-  evalValueText: {
-    color: '#F8FAFC',
-    fontSize: 16,
-    fontWeight: '800',
-    marginTop: 3,
-  },
-  evalUnitText: {
-    color: '#64748B',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  examCoachInterpretationBox: {
-    marginTop: 14,
-    backgroundColor: '#0F172A',
-    padding: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#1E293B',
-  },
-  emptyText: {
-    color: '#64748B',
-    fontSize: 12,
-    textAlign: 'center',
-    paddingVertical: 16,
-  },
-  modelStatusBanner: {
-    backgroundColor: '#0F172A',
-    borderColor: '#38BDF8',
-    borderWidth: 1,
-    padding: 10,
-    borderRadius: 11,
-    marginBottom: 10,
-  },
-  modelStatusBannerText: {
-    color: '#38BDF8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  downloadProgressBox: {
-    backgroundColor: '#0F172A',
-    padding: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#F59E0B',
+  quickPromptsScroll: {
     marginBottom: 12,
   },
-  downloadProgressTitle: {
-    color: '#F59E0B',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  cancelDownloadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  cancelDownloadText: {
-    color: '#FCA5A5',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  progressBarBg: {
-    height: 9,
-    backgroundColor: '#1E293B',
-    borderRadius: 5,
-    overflow: 'hidden',
-    marginVertical: 8,
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#F59E0B',
-  },
-  downloadBytesText: {
-    color: '#94A3B8',
-    fontSize: 11,
-    textAlign: 'right',
-  },
-  modelCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#1E293B',
-    marginBottom: 10,
-  },
-  modelTitle: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  recBadge: {
-    backgroundColor: '#F59E0B25',
-    borderColor: '#F59E0B',
-    borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  recBadgeText: {
-    color: '#F59E0B',
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  modelMetaText: {
-    color: '#38BDF8',
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  modelDescText: {
-    color: '#94A3B8',
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 6,
-    marginBottom: 10,
-  },
-  modelActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  downloadModelBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#F59E0B',
-    paddingVertical: 10,
-    borderRadius: 11,
-  },
-  downloadModelBtnText: {
-    color: '#0F172A',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  activateModelBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#064E3B',
-    borderWidth: 1,
-    borderColor: '#10B981',
-    paddingVertical: 10,
-    borderRadius: 11,
-  },
-  activateModelBtnActive: {
-    backgroundColor: '#10B981',
-  },
-  activateModelBtnText: {
-    color: '#34D399',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  deleteModelBtn: {
-    backgroundColor: '#7F1D1D60',
-    borderWidth: 1,
-    borderColor: '#EF444480',
-    padding: 10,
-    borderRadius: 11,
-  },
-  customUrlCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#334155',
-    marginTop: 4,
-  },
   quickQuestionChip: {
-    backgroundColor: '#0F172A',
+    backgroundColor: obsidianTheme.bg,
+    borderWidth: 1,
+    borderColor: obsidianTheme.border,
     paddingHorizontal: 11,
     paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#38BDF860',
+    borderRadius: obsidianTheme.radiusSm,
     marginRight: 8,
   },
   quickQuestionText: {
-    color: '#38BDF8',
-    fontSize: 11,
+    color: obsidianTheme.textSecondary,
+    fontSize: 11.5,
     fontWeight: '600',
   },
   chatHistoryBox: {
-    marginVertical: 10,
     gap: 8,
+    marginBottom: 12,
   },
   chatBubble: {
     padding: 12,
-    borderRadius: 14,
-    maxWidth: '94%',
+    borderRadius: obsidianTheme.radiusMd,
+    maxWidth: '92%',
   },
   chatBubbleUser: {
-    backgroundColor: '#38BDF8',
+    backgroundColor: obsidianTheme.accent,
     alignSelf: 'flex-end',
   },
   chatBubbleCoach: {
-    backgroundColor: '#0F172A',
+    backgroundColor: obsidianTheme.bg,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: obsidianTheme.border,
     alignSelf: 'flex-start',
   },
   chatProviderBadge: {
-    color: '#F59E0B',
+    color: obsidianTheme.accent,
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '700',
     marginBottom: 4,
   },
   chatBubbleText: {
-    color: '#E2E8F0',
+    color: obsidianTheme.textPrimary,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -1772,24 +771,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 6,
   },
   chatInput: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: obsidianTheme.bg,
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 12,
-    color: '#F8FAFC',
+    borderColor: obsidianTheme.border,
+    borderRadius: obsidianTheme.radiusSm,
+    color: obsidianTheme.textPrimary,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 13,
   },
   chatSendBtn: {
-    backgroundColor: '#38BDF8',
     width: 42,
     height: 42,
-    borderRadius: 12,
+    borderRadius: obsidianTheme.radiusSm,
+    backgroundColor: obsidianTheme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
