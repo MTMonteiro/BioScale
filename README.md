@@ -1,6 +1,6 @@
 # ⚖️ BioScale AI
 
-Aplicativo mobile (**React Native + Expo**) desenvolvido para substituir o **OKOK International** em balanças inteligentes de bioimpedância **Wellmix / Chipsea BLE**, trazendo **Avatar Corporal Paramétrico**, **Tabela Completa de Evolução e Comparação de Períodos**, integração bidirecional com **Samsung Health (Health Connect)** e **IA Coach Multi-Provedor** (**OpenRouter**, **DeepSeek**, **Google Gemini** e motor heurístico offline).
+Aplicativo mobile (**React Native + Expo**) desenvolvido para substituir o **OKOK International** em balanças inteligentes de bioimpedância **Wellmix / Chipsea BLE**, trazendo **Avatar Corporal Paramétrico**, **Tabela Completa de Evolução e Comparação de Períodos (Manhã/Tarde/Noite)**, integração bidirecional com **Samsung Health (Health Connect + Sono)**, **Módulo Clínico de Exames Laboratoriais** e **IA Coach Multi-Provedor + Modelos Locais On-Device (Gemma GGUF via `llama.rn`)** com **Avatar Interativo do Coach**.
 
 ---
 
@@ -26,22 +26,28 @@ Aplicativo mobile (**React Native + Expo**) desenvolvido para substituir o **OKO
    - Guia passo a passo integrado de como posicionar a fita métrica em cada região ([`bodyMeasurements.ts`](src/utils/bodyMeasurements.ts)).
    - Cálculo automático de **BF% Marinha dos EUA (US Navy)**, **Relação Cintura-Quadril (RCQ/WHR)** e **Índice V-Taper (Ombro/Cintura)**.
 
-4. **📊 Tabela Completa de Evolução & Comparador de Avatares (Antes vs. Depois)**
-   - **Comparador de Períodos** ([`EvolutionAndCompareView.tsx`](src/components/EvolutionAndCompareView.tsx)): selecione duas datas do histórico para visualizar **dois Avatares lado a lado** (*Período A vs. Período B*) e os deltas ($\Delta$) de peso, gordura, massa muscular, água e circunferências.
+4. **📊 Tabela Completa de Evolução & Comparador de Avatares (Manhã / Tarde / Noite)**
+   - **Comparador de Períodos e Turnos** ([`EvolutionAndCompareView.tsx`](src/components/EvolutionAndCompareView.tsx)): filtre as pesagens por turno (**🌅 Manhã**, **☀️ Tarde**, **🌙 Noite** ou **Todos**) para evitar distorções de retenção hídrica ao longo do dia, compare **dois Avatares lado a lado** (*Período A vs. Período B*) e exclua registros incorretos com recálculo imediato das estatísticas.
    - **Tabela Histórica Completa**: visão tabular horizontal com todas as pesagens e medidas de fita métrica pareadas por data.
 
 5. **❤️ Integração Bidirecional com Samsung Health (Android Health Connect)**
    - Exporta automaticamente Peso, Gordura Corporal (%), Massa Muscular, Água, Massa Óssea e TMB para o **Samsung Health** via **Health Connect** ([`samsungHealthService.ts`](src/services/samsungHealthService.ts)).
-   - Importa Passos, Calorias Ativas, Distância, Frequência Cardíaca de Repouso e Horas de Sono do Samsung Health / Galaxy Watch para enriquecer a análise da IA.
+   - Importa Passos, Calorias Ativas, Distância, Frequência Cardíaca de Repouso e **Sessões de Sono (`SleepSession` com deduplicação de intervalos sobrepostos)** do Samsung Health / Galaxy Watch.
 
-6. **🤖 IA Coach Multi-Provedor**
-   - Suporte nativo para múltiplos motores de IA ([`aiCoachService.ts`](src/services/aiCoachService.ts)):
-     - **OpenRouter** (`deepseek/deepseek-chat`, `deepseek/deepseek-r1`, `google/gemini-2.0-flash-001`, `openai/gpt-4o-mini`, etc.)
-     - **DeepSeek API Direta** (`deepseek-chat` / `deepseek-reasoner`)
-     - **Google Gemini API** (`gemini-1.5-flash`)
-     - **Motor Heurístico Local (100% Offline, sem chave de API)**
+6. **🧪 Módulo Clínico de Exames de Sangue (`labExams.ts`)**
+   - Registro e avaliação automática de **19 biomarcadores laboratoriais** ([`labExams.ts`](src/utils/labExams.ts)) divididos em 4 categorias:
+     - **Glicemia & Insulina**: Glicemia de Jejum, Hemoglobina Glicada (`HbA1c`), Insulina de Jejum e cálculo automático do índice **HOMA-IR**.
+     - **Perfil Lipídico**: Colesterol Total, HDL-c, LDL-c e Triglicerídeos.
+     - **Hormônios & Tireoide**: TSH, T4 Livre, Testosterona Total e Cortisol Matinal.
+     - **Vitaminas, Inflamação & Órgãos**: Vitamina D (`25-OH`), Vitamina B12, Ferritina, PCR Ultrassensível (`PCR-us`), Creatinina, TGO (`AST`) e TGP (`ALT`).
 
-7. **💾 Armazenamento Local-First + Sincronização Opcional com Supabase**
+7. **🤖 Avatar do Coach IA + Modelos Locais On-Device (Gemma GGUF) & Nuvem**
+   - **Avatar Vetorial do Coach ([`CoachAvatarSvg.tsx`](src/components/CoachAvatarSvg.tsx))**: 3 personas selecionáveis (**Dr. Atlas IA**, **Coach Aura IA** e **Gemma Neural Core**) com cálculo do **Bio Health Score (0–100)**.
+   - **Download e Execução de IA Local no Celular ([`localModelService.ts`](src/services/localModelService.ts))**: baixe modelos **Google Gemma 3 (1B / 270M)**, **Gemma 2 (2B)** ou **Llama 3.2 (1B)** em formato `.gguf` direto pelo aplicativo e execute a inferência 100% offline na CPU/NPU ARM64 via `llama.rn` com streaming de tokens em tempo real.
+   - **Provedores em Nuvem + Motor Clínico**: suporte simultâneo a **OpenRouter**, **DeepSeek API**, **Google Gemini API** e motor heurístico local ([`aiCoachService.ts`](src/services/aiCoachService.ts)).
+   - **Plano Estruturado em 5 Pilares ([`AiCoachHubView.tsx`](src/components/AiCoachHubView.tsx))**: gera recomendações personalizadas de **Resumo Geral**, **Treinos**, **Alimentação (kcal + macros)**, **Hábitos & Sono** e **Interpretação de Exames**, além de **Chat Interativo** com o Coach.
+
+8. **💾 Armazenamento Local-First + Sincronização Opcional com Supabase**
    - Todos os dados ficam salvos localmente no celular via `AsyncStorage` ([`storageAndCloud.ts`](src/services/storageAndCloud.ts)).
    - Sincronização em nuvem **100% opcional** com **Supabase** (configurável direto na aba *Ajustes*).
 
@@ -53,23 +59,27 @@ Aplicativo mobile (**React Native + Expo**) desenvolvido para substituir o **OKO
 bio-scale-ai/
 ├── App.tsx                                  # Navegação principal (6 abas) e estado global
 ├── plugins/
-│   └── withAndroidGradleFixes.js            # Config Plugin Expo (minSdk=26, arm64-v8a e intent Health Connect)
+│   └── withAndroidGradleFixes.js            # Config Plugin Expo (minSdk=26, arm64-v8a, largeHeap, NDK e Health Connect)
 ├── src/
 │   ├── components/
-│   │   ├── BodyAvatarSvg.tsx                # Avatar SVG paramétrico em tempo real
-│   │   ├── EvolutionAndCompareView.tsx      # Tabela histórica e comparador Antes vs. Depois
+│   │   ├── AiCoachHubView.tsx               # Hub completo do Coach IA (Treinos, Nutrição, Hábitos, Exames, Gemma Local e Chat)
+│   │   ├── BodyAvatarSvg.tsx                # Avatar SVG corporal paramétrico em tempo real
+│   │   ├── CoachAvatarSvg.tsx               # Avatar SVG interativo do Coach IA (Dr. Atlas, Coach Aura, Gemma Core)
+│   │   ├── EvolutionAndCompareView.tsx      # Tabela histórica, filtro de turnos e comparador Antes vs. Depois
 │   │   └── TrendChart.tsx                   # Gráfico SVG de evolução temporal
 │   ├── services/
-│   │   ├── aiCoachService.ts                # Cliente OpenRouter, DeepSeek, Gemini e Offline
+│   │   ├── aiCoachService.ts                # Orquestrador Coach IA (Gemma Local llama.rn, OpenRouter, DeepSeek, Gemini e Clínico)
 │   │   ├── bleScanner.ts                    # Scanner Bluetooth Low Energy (react-native-ble-plx)
+│   │   ├── localModelService.ts             # Gerenciador de download GGUF e inferência local via llama.rn
 │   │   ├── okokBleParser.ts                 # Parser hexadecimal do protocolo Chipsea/OKOK (0xCA)
-│   │   ├── samsungHealthService.ts          # Ponte com Samsung Health via Android Health Connect
+│   │   ├── samsungHealthService.ts          # Ponte com Samsung Health via Android Health Connect (incluindo Sono)
 │   │   └── storageAndCloud.ts               # Persistência AsyncStorage + Sync opcional Supabase
 │   ├── types/
-│   │   └── health.ts                        # Tipagens TypeScript do domínio
+│   │   └── health.ts                        # Tipagens TypeScript do domínio (BIA, Medidas, Exames, Modelos GGUF e Coach)
 │   └── utils/
 │       ├── bioimpedance.ts                  # Fórmulas de composição corporal (BIA)
-│       └── bodyMeasurements.ts              # Guia de fita métrica e cálculos antropométricos
+│       ├── bodyMeasurements.ts              # Guia de fita métrica e cálculos antropométricos
+│       └── labExams.ts                      # Referências clínicas de 19 biomarcadores de sangue e cálculo HOMA-IR
 └── .github/workflows/
     └── release-apk.yml                      # Workflow manual de build e release de APK Android
 ```
@@ -167,9 +177,10 @@ O parser em [`src/services/okokBleParser.ts`](src/services/okokBleParser.ts) dec
 ## 🗄️ Chaves de Armazenamento Local (`AsyncStorage`) & Schema Supabase
 
 Por padrão, o app funciona **100% offline** salvando tudo no celular com as chaves:
-- `@bioscale:user_profile_v1`: Perfil do usuário, provedor de IA ativo (`openrouter`, `deepseek`, `gemini`, `local`), chave de API e credenciais opcionais do Supabase.
+- `@bioscale:user_profile_v1`: Perfil do usuário, persona do Coach, provedor de IA ativo (`gemma_local`, `openrouter`, `deepseek`, `gemini`, `local`), modelo GGUF selecionado, chave de API e credenciais opcionais do Supabase.
 - `@bioscale:weight_history_v1`: Histórico completo de pesagens e bioimpedância.
 - `@bioscale:body_measurements_v1`: Histórico de circunferências corporais de fita métrica (10 regiões).
+- `@bioscale:lab_exams_v1`: Histórico de resultados de exames laboratoriais de sangue (19 biomarcadores + HOMA-IR).
 
 ### SQL Opcional para Nuvem (Supabase)
 Caso deseje ativar o backup em nuvem na aba **Ajustes**, execute o SQL abaixo no SQL Editor do seu projeto Supabase:
@@ -197,6 +208,14 @@ create table if not exists public.body_measurements_logs (
   timestamp bigint not null,
   weight_kg numeric,
   measurements jsonb not null,
+  notes text
+);
+
+create table if not exists public.lab_exams_logs (
+  id text primary key,
+  timestamp bigint not null,
+  lab_name text,
+  payload jsonb not null,
   notes text
 );
 ```

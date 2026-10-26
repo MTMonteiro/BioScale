@@ -4,15 +4,18 @@ import {
   BioimpedanceMetrics,
   BodyMeasurementsEntry,
   DayPeriod,
+  LabExamEntry,
   UserProfile,
 } from '../types/health';
 import { calculateBioimpedance, getDayPeriodFromIso } from '../utils/bioimpedance';
 import { calculateAnthropometricIndices } from '../utils/bodyMeasurements';
+import { calculateHomaIr } from '../utils/labExams';
 
 const STORAGE_KEYS = {
   MEASUREMENTS: '@bioscale:measurements_v1',
   PROFILE: '@bioscale:profile_v1',
   BODY_TAPE: '@bioscale:body_tape_v2',
+  LAB_EXAMS: '@bioscale:lab_exams_v1',
 };
 
 export const DEFAULT_PROFILE: UserProfile = {
@@ -21,7 +24,12 @@ export const DEFAULT_PROFILE: UserProfile = {
   age: 28,
   sex: 'male',
   targetWeightKg: 74.0,
-  aiProvider: 'openrouter',
+  trainingGoal: 'recomposition',
+  weeklyWorkoutsTarget: 4,
+  coachPersona: 'atlas',
+  aiProvider: 'gemma_local',
+  selectedLocalModelId: 'gemma-3-1b-q4',
+  customLocalModelUrl: '',
   openRouterApiKey: '',
   openRouterModel: 'deepseek/deepseek-chat',
   deepseekApiKey: '',
@@ -321,6 +329,112 @@ export async function saveBodyMeasurementsEntry(
   return updated;
 }
 
+export function generateSeedLabExams(): LabExamEntry[] {
+  const daysAgo7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const glucose = 91;
+  const insulin = 7.8;
+  return [
+    {
+      id: 'exam-seed-1',
+      timestamp: daysAgo7,
+      label: 'Check-up Metabólico & Hormonal',
+      fastingGlucoseMgDl: glucose,
+      hba1cPercent: 5.3,
+      fastingInsulinUiuMl: insulin,
+      homaIr: calculateHomaIr(glucose, insulin),
+      totalCholesterolMgDl: 184,
+      hdlMgDl: 48,
+      ldlMgDl: 108,
+      triglyceridesMgDl: 138,
+      tshUiuMl: 2.1,
+      freeT4NgDl: 1.25,
+      totalTestosteroneNgDl: 540,
+      morningCortisolUgDl: 14.2,
+      vitaminDNgMl: 26.5,
+      vitaminB12PgMl: 430,
+      ferritinNgMl: 115,
+      hsCrpMgL: 1.1,
+      creatinineMgDl: 1.04,
+      astU_L: 25,
+      altU_L: 28,
+      customNotes:
+        'Objetivo: recomposição corporal, baixar LDL para < 100 mg/dL e corrigir Vitamina D.',
+    },
+  ];
+}
+
+export async function loadLabExamsHistory(): Promise<LabExamEntry[]> {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.LAB_EXAMS);
+    if (raw !== null) {
+      const parsed: LabExamEntry[] = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  const seeded = generateSeedLabExams();
+  await AsyncStorage.setItem(STORAGE_KEYS.LAB_EXAMS, JSON.stringify(seeded));
+  return seeded;
+}
+
+export async function saveLabExamEntry(
+  rawExam: Omit<LabExamEntry, 'id' | 'timestamp' | 'homaIr'>,
+  profile: UserProfile
+): Promise<LabExamEntry[]> {
+  const current = await loadLabExamsHistory();
+  const homaIr = calculateHomaIr(
+    rawExam.fastingGlucoseMgDl,
+    rawExam.fastingInsulinUiuMl
+  );
+
+  const newExam: LabExamEntry = {
+    ...rawExam,
+    id: `exam-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    homaIr,
+  };
+
+  if (profile.supabaseUrl && profile.supabaseAnonKey) {
+    try {
+      const supabase = createClient(profile.supabaseUrl, profile.supabaseAnonKey);
+      const { error } = await supabase.from('lab_exams').insert([
+        {
+          id: newExam.id,
+          created_at: newExam.timestamp,
+          label: newExam.label,
+          payload: newExam,
+        },
+      ]);
+      if (!error) {
+        newExam.syncedSupabase = true;
+      }
+    } catch (e) {
+      console.warn('Erro ao salvar exame no Supabase:', e);
+    }
+  }
+
+  const updated = [...current, newExam];
+  await AsyncStorage.setItem(STORAGE_KEYS.LAB_EXAMS, JSON.stringify(updated));
+  return updated;
+}
+
+export async function deleteLabExamEntry(
+  id: string,
+  profile: UserProfile
+): Promise<LabExamEntry[]> {
+  const current = await loadLabExamsHistory();
+  const updated = current.filter((e) => e.id !== id);
+  await AsyncStorage.setItem(STORAGE_KEYS.LAB_EXAMS, JSON.stringify(updated));
+
+  if (profile.supabaseUrl && profile.supabaseAnonKey) {
+    try {
+      const supabase = createClient(profile.supabaseUrl, profile.supabaseAnonKey);
+      await supabase.from('lab_exams').delete().eq('id', id);
+    } catch {}
+  }
+
+  return updated;
+}
+
 export const SUPABASE_SQL_SCHEMA = `-- Execute este SQL no SQL Editor do seu projeto Supabase:
 create table if not exists public.measurements (
   id text primary key,
@@ -351,5 +465,12 @@ create table if not exists public.body_measurements (
   calf_cm numeric(5,1),
   waist_hip_ratio numeric(4,2),
   navy_bf_percent numeric(4,1)
+);
+
+create table if not exists public.lab_exams (
+  id text primary key,
+  created_at timestamptz not null default now(),
+  label text,
+  payload jsonb not null
 );
 `;

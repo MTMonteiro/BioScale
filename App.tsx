@@ -43,7 +43,9 @@ import {
   BodyPartKey,
   DayPeriod,
   DayPeriodFilter,
+  LabExamEntry,
   SamsungHealthSummary,
+  StructuredCoachPlan,
   UserProfile,
 } from './src/types/health';
 import {
@@ -70,6 +72,9 @@ import {
   saveProfile,
   loadBodyMeasurementsHistory,
   saveBodyMeasurementsEntry,
+  loadLabExamsHistory,
+  saveLabExamEntry,
+  deleteLabExamEntry,
   DEFAULT_PROFILE,
   SUPABASE_SQL_SCHEMA,
 } from './src/services/storageAndCloud';
@@ -78,9 +83,11 @@ import {
   OPENROUTER_SUGGESTED_MODELS,
   DEEPSEEK_SUGGESTED_MODELS,
 } from './src/services/aiCoachService';
+import { LOCAL_GEMMA_MODELS } from './src/services/localModelService';
 import { TrendChart } from './src/components/TrendChart';
 import { BodyAvatarSvg } from './src/components/BodyAvatarSvg';
 import { EvolutionAndCompareView } from './src/components/EvolutionAndCompareView';
+import { AiCoachHubView } from './src/components/AiCoachHubView';
 
 type ActiveTab = 'dashboard' | 'scanner' | 'avatar' | 'compare' | 'ai' | 'settings';
 
@@ -138,9 +145,10 @@ export default function App() {
   );
   const [webConfirmDeleteId, setWebConfirmDeleteId] = useState<string | null>(null);
 
-  // Estados do AI Coach
-  const [aiReport, setAiReport] = useState<string>('');
-  const [aiProviderBadge, setAiProviderBadge] = useState<string>('');
+  // Estados do AI Coach & Exames Laboratoriais
+  const [labExams, setLabExams] = useState<LabExamEntry[]>([]);
+  const [coachPlan, setCoachPlan] = useState<StructuredCoachPlan | null>(null);
+  const [streamingPreview, setStreamingPreview] = useState<string>('');
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
   const [syncingHealth, setSyncingHealth] = useState<boolean>(false);
   const [settingsSavedMsg, setSettingsSavedMsg] = useState<string>('');
@@ -168,8 +176,20 @@ export default function App() {
           calfCm: lastB.calfCm,
         });
       }
+      const loadedExams = await loadLabExamsHistory();
+      setLabExams(loadedExams);
       const healthData = await syncWithSamsungHealth();
       setSamsungHealth(healthData);
+
+      // Gera plano base inicial imediato cruzando Balança + Avatar + Sono + Exames
+      const initialPlan = await generateAiHealthCoachAnalysis(
+        loadedHist,
+        healthData,
+        { ...loadedProf, aiProvider: 'local' },
+        loadedBody,
+        loadedExams
+      );
+      setCoachPlan(initialPlan);
     })();
   }, []);
 
@@ -334,15 +354,43 @@ export default function App() {
 
   const handleGenerateAiAnalysis = async () => {
     setLoadingAi(true);
+    setStreamingPreview('');
     const res = await generateAiHealthCoachAnalysis(
       history,
       samsungHealth,
       profile,
-      bodyHistory
+      bodyHistory,
+      labExams,
+      (partial) => setStreamingPreview(partial)
     );
-    setAiReport(res.text);
-    setAiProviderBadge(res.providerUsed);
+    setCoachPlan(res);
+    setStreamingPreview('');
     setLoadingAi(false);
+  };
+
+  const handleUpdateAndSaveProfile = async (nextProf: UserProfile) => {
+    setProfile(nextProf);
+    await saveProfile(nextProf);
+  };
+
+  const handleSaveNewLabExam = async (
+    examInput: Omit<LabExamEntry, 'id' | 'timestamp' | 'homaIr'>
+  ) => {
+    const updatedExams = await saveLabExamEntry(examInput, profile);
+    setLabExams(updatedExams);
+    const refreshedPlan = await generateAiHealthCoachAnalysis(
+      history,
+      samsungHealth,
+      profile,
+      bodyHistory,
+      updatedExams
+    );
+    setCoachPlan(refreshedPlan);
+  };
+
+  const handleRemoveLabExam = async (id: string) => {
+    const updatedExams = await deleteLabExamEntry(id, profile);
+    setLabExams(updatedExams);
   };
 
   const handleSaveProfileSettings = async () => {
@@ -1058,69 +1106,30 @@ export default function App() {
   };
 
   const renderAiCoach = () => (
-    <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
-      <View style={styles.aiHeaderCard}>
-        <View style={styles.measureEditorHeader}>
-          <View style={styles.rowCenter}>
-            <Sparkles size={22} color="#38BDF8" />
-            <Text style={styles.aiTitle}>Treinador IA Multi-Modelo</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.syncButton}
-            onPress={() => setActiveTab('settings')}
-          >
-            <Settings size={13} color="#38BDF8" />
-            <Text style={styles.syncBtnText}>
-              {profile.aiProvider.toUpperCase()}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.aiDesc}>
-          Suporta **OpenRouter** (`deepseek/deepseek-chat`, `deepseek-r1`, Claude, GPT-4o), **DeepSeek API Direta** ou **Google Gemini**. Cruza sua balança Wellmix com o Avatar e Samsung Health!
-        </Text>
-
-        <TouchableOpacity
-          style={styles.primaryBtn}
-          onPress={handleGenerateAiAnalysis}
-          disabled={loadingAi}
-        >
-          {loadingAi ? (
-            <ActivityIndicator size="small" color="#0F172A" />
-          ) : (
-            <>
-              <Sparkles size={18} color="#0F172A" />
-              <Text style={styles.primaryBtnText}>Gerar Diagnóstico Inteligente</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {aiReport ? (
-        <View style={styles.aiResultCard}>
-          {aiProviderBadge !== '' && (
-            <View style={styles.providerUsedBadge}>
-              <Text style={styles.providerUsedText}>Modelo: {aiProviderBadge}</Text>
-            </View>
-          )}
-          <Text style={styles.aiResultText}>{aiReport}</Text>
-        </View>
-      ) : (
-        <View style={styles.aiResultCard}>
-          <Text style={styles.logEmpty}>
-            Toque em "Gerar Diagnóstico Inteligente" para analisar sua evolução de gordura, simetria corporal do Avatar e sono do Samsung Health.
-          </Text>
-        </View>
-      )}
-    </ScrollView>
+    <AiCoachHubView
+      history={history}
+      bodyHistory={bodyHistory}
+      labExams={labExams}
+      samsungHealth={samsungHealth}
+      profile={profile}
+      coachPlan={coachPlan}
+      loadingAi={loadingAi}
+      streamingPreview={streamingPreview}
+      onGenerateAnalysis={handleGenerateAiAnalysis}
+      onUpdateProfile={handleUpdateAndSaveProfile}
+      onSaveLabExam={handleSaveNewLabExam}
+      onDeleteLabExam={handleRemoveLabExam}
+      onOpenSettings={() => setActiveTab('settings')}
+    />
   );
 
   const renderSettings = () => {
     const providers: Array<{ key: AiProvider; label: string }> = [
+      { key: 'gemma_local', label: '⚡ Gemma Local (On-Device)' },
       { key: 'openrouter', label: 'OpenRouter' },
       { key: 'deepseek', label: 'DeepSeek' },
       { key: 'gemini', label: 'Gemini' },
-      { key: 'local', label: 'Local Offline' },
+      { key: 'local', label: 'Motor Bio-Heurístico' },
     ];
 
     return (
@@ -1151,6 +1160,58 @@ export default function App() {
               );
             })}
           </View>
+
+          {profile.aiProvider === 'gemma_local' && (
+            <View style={styles.providerConfigBox}>
+              <Text style={styles.inputLabel}>
+                Modelo Local Google Gemma (GGUF On-Device via llama.rn)
+              </Text>
+              <Text style={[styles.logEmpty, { marginBottom: 8 }]}>
+                Escolha qual modelo Gemma deseja usar no Coach IA e baixe o arquivo GGUF diretamente na aba IA Coach → Baixar IA Local (Gemma):
+              </Text>
+
+              {LOCAL_GEMMA_MODELS.map((m) => {
+                const isSel =
+                  (profile.selectedLocalModelId || 'gemma-3-1b-q4') === m.id;
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    onPress={() =>
+                      setProfile({ ...profile, selectedLocalModelId: m.id })
+                    }
+                    style={[
+                      styles.modelPresetChip,
+                      { marginBottom: 6, paddingVertical: 8 },
+                      isSel && {
+                        borderColor: '#F59E0B',
+                        backgroundColor: '#F59E0B20',
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modelPresetText,
+                        isSel && { color: '#F59E0B', fontWeight: '800' },
+                      ]}
+                    >
+                      {isSel ? '✓ ' : ''}
+                      {m.name} (~{m.sizeMb} MB)
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <TouchableOpacity
+                style={[styles.secondaryBtn, { marginTop: 8 }]}
+                onPress={() => setActiveTab('ai')}
+              >
+                <Cpu size={16} color="#38BDF8" />
+                <Text style={styles.secondaryBtnText}>
+                  Abrir Gerenciador de Download Gemma no Coach
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {profile.aiProvider === 'openrouter' && (
             <View style={styles.providerConfigBox}>

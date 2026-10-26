@@ -23,12 +23,17 @@ module.exports = function withAndroidGradleFixes(config) {
     setProp('android.minSdkVersion', '26');
     setProp('android.suppressUnsupportedCompileSdk', '36,37');
     setProp('reactNativeArchitectures', 'arm64-v8a');
+    setProp('RNLlama_ndkVersion', '27.1.12297006');
 
     return config;
   });
 
   config = withAndroidManifest(config, (config) => {
     const mainApplication = config.modResults.manifest.application?.[0];
+    if (mainApplication) {
+      mainApplication.$ = mainApplication.$ || {};
+      mainApplication.$['android:largeHeap'] = 'true';
+    }
     if (mainApplication && mainApplication.activity) {
       const mainActivity = mainApplication.activity.find(
         (act) => act.$?.['android:name'] === '.MainActivity'

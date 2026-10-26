@@ -43,6 +43,7 @@
         }
       ],
       "react-native-health-connect",
+      "llama.rn",
       "./plugins/withAndroidGradleFixes"
     ],
     "web": {
