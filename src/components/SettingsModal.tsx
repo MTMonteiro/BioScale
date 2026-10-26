@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  StatusBar,
 } from 'react-native';
 import {
   X,
@@ -1155,6 +1156,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: obsidianTheme.bg,
+    paddingTop:
+      Platform.OS === 'android'
+        ? Math.max(StatusBar.currentHeight || 0, 32) + 10
+        : 0,
   },
   topBar: {
     flexDirection: 'row',

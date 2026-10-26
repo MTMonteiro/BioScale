@@ -39,6 +39,7 @@ import {
   computeBioHealthScore,
 } from '../services/aiCoachService';
 import { CoachAvatarSvg } from './CoachAvatarSvg';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { obsidianTheme } from '../theme/obsidianTheme';
 
 export interface AiCoachHubViewProps {
@@ -313,7 +314,7 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
             <Text style={styles.streamPreviewTitle}>
               ⚡ Inferência On-Device em Tempo Real:
             </Text>
-            <Text style={styles.streamPreviewText}>{streamingPreview}</Text>
+            <MarkdownRenderer content={streamingPreview} compact />
           </View>
         )}
       </View>
@@ -359,11 +360,13 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
                 Diagnóstico Executivo Integrado
               </Text>
             </View>
-            <Text style={styles.planBodyText}>
-              {coachPlan
-                ? coachPlan.overviewAnalysis
-                : 'Toque em "Atualizar Plano com IA" acima para cruzar sua bioimpedância Wellmix, simetria do Avatar, Samsung Health e exames laboratoriais.'}
-            </Text>
+            <MarkdownRenderer
+              content={
+                coachPlan
+                  ? coachPlan.overviewAnalysis
+                  : 'Toque em **Atualizar Plano com IA** acima para cruzar sua bioimpedância Wellmix, simetria do Avatar, Samsung Health e exames laboratoriais.'
+              }
+            />
           </View>
 
           <View style={styles.sectionCard}>
@@ -373,13 +376,15 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
                 Destaques Clínicos & Exames Laboratoriais
               </Text>
             </View>
-            <Text style={styles.planBodyText}>
-              {coachPlan
-                ? coachPlan.examsAnalysis
-                : latestExamEval
-                ? `Último check-up (${latestExam?.label}): ${latestExamEval.optimalCount} marcadores em faixa ótima e ${latestExamEval.alerts.length} ponto(s) de atenção. Gere o plano para ver os ajustes clínicos.`
-                : 'Consulte ou cadastre novos biomarcadores na aba Saúde & Exames para calibrar sua conduta clínica.'}
-            </Text>
+            <MarkdownRenderer
+              content={
+                coachPlan
+                  ? coachPlan.examsAnalysis
+                  : latestExamEval
+                  ? `Último check-up (**${latestExam?.label}**): **${latestExamEval.optimalCount} marcadores** em faixa ótima e **${latestExamEval.alerts.length} ponto(s)** de atenção. Gere o plano para ver os ajustes clínicos.`
+                  : 'Consulte ou cadastre novos biomarcadores na aba **Saúde & Exames** para calibrar sua conduta clínica.'
+              }
+            />
           </View>
         </View>
       )}
@@ -392,11 +397,13 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
               Periodização de Treino, Simetria & Cardio
             </Text>
           </View>
-          <Text style={styles.planBodyText}>
-            {coachPlan
-              ? coachPlan.trainingPlan
-              : 'Toque em "Atualizar Plano com IA" para gerar sua prescrição semanal focada nos pontos de simetria do seu Avatar e protocolo de queima visceral.'}
-          </Text>
+          <MarkdownRenderer
+            content={
+              coachPlan
+                ? coachPlan.trainingPlan
+                : 'Toque em **Atualizar Plano com IA** para gerar sua prescrição semanal focada nos pontos de simetria do seu Avatar e protocolo de queima visceral.'
+            }
+          />
         </View>
       )}
 
@@ -409,11 +416,13 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
                 Prescrição Nutricional, Macros & Suplementação
               </Text>
             </View>
-            <Text style={styles.planBodyText}>
-              {coachPlan
-                ? coachPlan.nutritionPlan
-                : 'Toque em "Atualizar Plano com IA" para calcular suas calorias exatas, gramas de proteínas, carboidratos, gorduras e ajustes pelos exames.'}
-            </Text>
+            <MarkdownRenderer
+              content={
+                coachPlan
+                  ? coachPlan.nutritionPlan
+                  : 'Toque em **Atualizar Plano com IA** para calcular suas calorias exatas, gramas de proteínas, carboidratos, gorduras e ajustes pelos exames.'
+              }
+            />
           </View>
 
           <View style={styles.sectionCard}>
@@ -423,11 +432,13 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
                 Protocolo Circadiano, Sono & Recuperação
               </Text>
             </View>
-            <Text style={styles.planBodyText}>
-              {coachPlan
-                ? coachPlan.habitsAndRecoveryPlan
-                : 'Toque em "Atualizar Plano com IA" para receber sua rotina circadiana, meta de passos e manejo de cortisol.'}
-            </Text>
+            <MarkdownRenderer
+              content={
+                coachPlan
+                  ? coachPlan.habitsAndRecoveryPlan
+                  : 'Toque em **Atualizar Plano com IA** para receber sua rotina circadiana, meta de passos e manejo de cortisol.'
+              }
+            />
           </View>
         </View>
       )}
@@ -478,14 +489,18 @@ export const AiCoachHubView: React.FC<AiCoachHubViewProps> = ({
                       ⚡ {msg.providerBadge}
                     </Text>
                   )}
-                  <Text
-                    style={[
-                      styles.chatBubbleText,
-                      isUser && { color: obsidianTheme.bg, fontWeight: '700' },
-                    ]}
-                  >
-                    {msg.text}
-                  </Text>
+                  {isUser ? (
+                    <Text
+                      style={[
+                        styles.chatBubbleText,
+                        { color: obsidianTheme.bg, fontWeight: '700' },
+                      ]}
+                    >
+                      {msg.text}
+                    </Text>
+                  ) : (
+                    <MarkdownRenderer content={msg.text} compact />
+                  )}
                 </View>
               );
             })}

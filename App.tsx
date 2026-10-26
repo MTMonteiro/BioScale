@@ -1013,7 +1013,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: obsidianTheme.bg,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 24 : 0,
+    paddingTop:
+      Platform.OS === 'android'
+        ? Math.max(StatusBar.currentHeight || 0, 32) + 6
+        : 0,
   },
   topHeader: {
     flexDirection: 'row',
